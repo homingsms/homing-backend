@@ -1,0 +1,2224 @@
+openapi: 3.1.0
+info:
+  title: Homing Cloud Public API
+  version: 1.0.0
+  summary: Send and receive SMS, data SMS and MMS through your own Android phones.
+  description: |
+    The public API used by customer applications and the Homing Cloud web console.
+
+    Authentication:
+    - Web console: `POST /auth/sign-in` sets an httpOnly `homing_session` cookie. A session has every scope of its user.
+    - Applications: `Authorization: Bearer hk_live_...` with an API key. Each operation lists the scope it needs; `admin` grants every scope.
+
+    Lists use cursor pagination: pass `nextCursor` from a page as `cursor` to get the next page. `nextCursor` is `null` on the last page.
+
+    Every error uses the `Error` shape.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Homing-Proprietary
+  contact:
+    name: Homing
+    url: https://homingsms.com
+servers:
+  - url: https://api.homingsms.com/api/v1
+    description: Production. Local development serves the same paths at http://localhost:7010/api/v1.
+tags:
+  - name: Auth
+    description: Console sign up, sign in and session.
+  - name: Account
+    description: Account settings.
+  - name: API keys
+    description: Scoped API keys for applications.
+  - name: Devices
+    description: Paired phones, their SIMs and pairing codes.
+  - name: Messages
+    description: Outgoing SMS, data SMS and MMS.
+  - name: Inbox
+    description: Messages received by your phones.
+  - name: Webhooks
+    description: Webhook endpoints, deliveries and test events.
+  - name: Usage
+    description: Counters for the dashboard.
+  - name: Health
+    description: Service health.
+security:
+  - sessionCookie: []
+  - apiKey: [admin]
+paths:
+  /auth/sign-up:
+    post:
+      tags: [Auth]
+      operationId: signUp
+      summary: Create an account and its first user
+      description: Creates an account with the caller as `owner` and starts a session.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignUpRequest'
+      responses:
+        '201':
+          description: Account created and session started.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetSessionCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/sign-in:
+    post:
+      tags: [Auth]
+      operationId: signIn
+      summary: Sign in with email and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignInRequest'
+      responses:
+        '200':
+          description: Session started.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetSessionCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/sign-out:
+    post:
+      tags: [Auth]
+      operationId: signOut
+      summary: End the current session
+      security:
+        - sessionCookie: []
+      responses:
+        '204':
+          description: Session ended and cookie cleared.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/me:
+    get:
+      tags: [Auth]
+      operationId: getMe
+      summary: Get the signed-in user and account
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Current session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /account:
+    get:
+      tags: [Account]
+      operationId: getAccount
+      summary: Get account settings
+      responses:
+        '200':
+          description: Account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    patch:
+      tags: [Account]
+      operationId: updateAccount
+      summary: Update account settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAccountRequest'
+      responses:
+        '200':
+          description: Updated account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api-keys:
+    get:
+      tags: [API keys]
+      operationId: listApiKeys
+      summary: List API keys
+      description: Secrets are never returned after creation; only the prefix is shown.
+      responses:
+        '200':
+          description: API keys, newest first, including revoked keys.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [API keys]
+      operationId: createApiKey
+      summary: Create an API key
+      description: The response is the only time the full `secret` is returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApiKeyRequest'
+      responses:
+        '201':
+          description: API key created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKeyWithSecret'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api-keys/{apiKeyId}:
+    parameters:
+      - $ref: '#/components/parameters/ApiKeyId'
+    delete:
+      tags: [API keys]
+      operationId: revokeApiKey
+      summary: Revoke an API key
+      description: Revocation is immediate and cannot be undone.
+      responses:
+        '204':
+          description: Revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /devices:
+    get:
+      tags: [Devices]
+      operationId: listDevices
+      summary: List paired devices
+      security:
+        - sessionCookie: []
+        - apiKey: [devices:manage]
+      responses:
+        '200':
+          description: Devices, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /devices/pairing-codes:
+    post:
+      tags: [Devices]
+      operationId: createPairingCode
+      summary: Create a one-time pairing code
+      description: The phone enters the code, or scans `pairingUri` as a QR code, to pair with this account.
+      security:
+        - sessionCookie: []
+        - apiKey: [devices:manage]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePairingCodeRequest'
+      responses:
+        '201':
+          description: Pairing code created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PairingCode'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /devices/{deviceId}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    get:
+      tags: [Devices]
+      operationId: getDevice
+      summary: Get a device
+      security:
+        - sessionCookie: []
+        - apiKey: [devices:manage]
+      responses:
+        '200':
+          description: Device.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Devices]
+      operationId: updateDevice
+      summary: Rename a device, pause it or change its limits
+      description: Limit changes are pushed to the phone as remote settings.
+      security:
+        - sessionCookie: []
+        - apiKey: [devices:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDeviceRequest'
+      responses:
+        '200':
+          description: Updated device.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Devices]
+      operationId: removeDevice
+      summary: Remove a device
+      description: Revokes the device token. Messages leased to it go back to the queue.
+      security:
+        - sessionCookie: []
+        - apiKey: [devices:manage]
+      responses:
+        '204':
+          description: Removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /messages:
+    post:
+      tags: [Messages]
+      operationId: sendMessage
+      summary: Send an SMS, data SMS or MMS
+      description: |
+        Queues a message for one recipient. Homing picks an online device and SIM with the
+        account's routing strategy unless `deviceId` and `simSlot` are given.
+
+        Send the same `idempotencyKey` again to safely retry: the original message is returned
+        with status 200 and `Idempotent-Replayed: true`. Reusing a key with a different body
+        returns 409.
+      security:
+        - sessionCookie: []
+        - apiKey: [messages:send]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+      responses:
+        '200':
+          description: Idempotent replay of an earlier request with the same key.
+          headers:
+            Idempotent-Replayed:
+              $ref: '#/components/headers/IdempotentReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageDetail'
+        '202':
+          description: Message accepted and queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    get:
+      tags: [Messages]
+      operationId: listMessages
+      summary: List messages
+      security:
+        - sessionCookie: []
+        - apiKey: [messages:read]
+      parameters:
+        - name: state
+          in: query
+          description: Only messages in this state.
+          schema:
+            $ref: '#/components/schemas/MessageState'
+        - name: type
+          in: query
+          schema:
+            $ref: '#/components/schemas/MessageType'
+        - name: deviceId
+          in: query
+          schema:
+            type: string
+        - name: to
+          in: query
+          description: Exact recipient phone number.
+          schema:
+            $ref: '#/components/schemas/PhoneNumber'
+        - $ref: '#/components/parameters/CreatedFrom'
+        - $ref: '#/components/parameters/CreatedTo'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Messages, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessagePage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /messages/{messageId}:
+    parameters:
+      - $ref: '#/components/parameters/MessageId'
+    get:
+      tags: [Messages]
+      operationId: getMessage
+      summary: Get a message with its state timeline
+      security:
+        - sessionCookie: []
+        - apiKey: [messages:read]
+      responses:
+        '200':
+          description: Message.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /messages/{messageId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/MessageId'
+    post:
+      tags: [Messages]
+      operationId: cancelMessage
+      summary: Cancel a message that has not reached the phone's send queue
+      description: Allowed in `scheduled`, `pending` and `leased`. Any later state returns 409.
+      security:
+        - sessionCookie: []
+        - apiKey: [messages:send]
+      responses:
+        '200':
+          description: Cancelled message.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /inbox:
+    get:
+      tags: [Inbox]
+      operationId: listInbox
+      summary: List received messages
+      security:
+        - sessionCookie: []
+        - apiKey: [inbox:read]
+      parameters:
+        - name: type
+          in: query
+          schema:
+            $ref: '#/components/schemas/MessageType'
+        - name: deviceId
+          in: query
+          schema:
+            type: string
+        - name: from
+          in: query
+          description: Exact sender.
+          schema:
+            type: string
+            maxLength: 32
+        - name: receivedFrom
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: receivedTo
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Received messages, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /inbox/{inboxMessageId}:
+    parameters:
+      - $ref: '#/components/parameters/InboxMessageId'
+    get:
+      tags: [Inbox]
+      operationId: getInboxMessage
+      summary: Get a received message
+      security:
+        - sessionCookie: []
+        - apiKey: [inbox:read]
+      responses:
+        '200':
+          description: Received message.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxMessage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /inbox/{inboxMessageId}/attachments/{attachmentId}:
+    parameters:
+      - $ref: '#/components/parameters/InboxMessageId'
+      - name: attachmentId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Inbox]
+      operationId: getInboxAttachment
+      summary: Download an MMS attachment
+      security:
+        - sessionCookie: []
+        - apiKey: [inbox:read]
+      responses:
+        '200':
+          description: Raw attachment bytes with their original content type.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /webhooks:
+    get:
+      tags: [Webhooks]
+      operationId: listWebhooks
+      summary: List webhook endpoints
+      security:
+        - sessionCookie: []
+        - apiKey: [webhooks:manage]
+      responses:
+        '200':
+          description: Endpoints, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpointList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Webhooks]
+      operationId: createWebhook
+      summary: Create a webhook endpoint
+      description: The response is the only time the signing `secret` is returned until it is rotated.
+      security:
+        - sessionCookie: []
+        - apiKey: [webhooks:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWebhookRequest'
+      responses:
+        '201':
+          description: Endpoint created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpointWithSecret'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /webhooks/{webhookId}:
+    parameters:
+      - $ref: '#/components/parameters/WebhookId'
+    get:
+      tags: [Webhooks]
+      operationId: getWebhook
+      summary: Get a webhook endpoint
+      security:
+        - sessionCookie: []
+        - apiKey: [webhooks:manage]
+      responses:
+        '200':
+          description: Endpoint.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpoint'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Webhooks]
+      operationId: updateWebhook
+      summary: Update a webhook endpoint
+      security:
+        - sessionCookie: []
+        - apiKey: [webhooks:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWebhookRequest'
+      responses:
+        '200':
+          description: Updated endpoint.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpoint'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Webhooks]
+      operationId: deleteWebhook
+      summary: Delete a webhook endpoint
+      security:
+        - sessionCookie: []
+        - apiKey: [webhooks:manage]
+      responses:
+        '204':
+          description: Deleted with its delivery log.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /webhooks/{webhookId}/rotate-secret:
+    parameters:
+      - $ref: '#/components/parameters/WebhookId'
+    post:
+      tags: [Webhooks]
+      operationId: rotateWebhookSecret
+      summary: Replace the signing secret
+      description: The old secret stops working immediately.
+      security:
+        - sessionCookie: []
+        - apiKey: [webhooks:manage]
+      responses:
+        '200':
+          description: New secret.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookSecret'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /webhooks/{webhookId}/test:
+    parameters:
+      - $ref: '#/components/parameters/WebhookId'
+    post:
+      tags: [Webhooks]
+      operationId: sendWebhookTest
+      summary: Send a `webhook.test` event to this endpoint
+      security:
+        - sessionCookie: []
+        - apiKey: [webhooks:manage]
+      responses:
+        '202':
+          description: Test delivery queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookDelivery'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /webhooks/{webhookId}/deliveries:
+    parameters:
+      - $ref: '#/components/parameters/WebhookId'
+    get:
+      tags: [Webhooks]
+      operationId: listWebhookDeliveries
+      summary: List the delivery log of an endpoint
+      security:
+        - sessionCookie: []
+        - apiKey: [webhooks:manage]
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/WebhookDeliveryStatus'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Deliveries, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookDeliveryPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /webhooks/{webhookId}/deliveries/{deliveryId}/redeliver:
+    parameters:
+      - $ref: '#/components/parameters/WebhookId'
+      - name: deliveryId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [Webhooks]
+      operationId: redeliverWebhook
+      summary: Send a delivery again
+      description: Resets the attempt counter and sends the original event with a fresh signature.
+      security:
+        - sessionCookie: []
+        - apiKey: [webhooks:manage]
+      responses:
+        '202':
+          description: Redelivery queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookDelivery'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /usage/summary:
+    get:
+      tags: [Usage]
+      operationId: getUsageSummary
+      summary: Today's counters, queue depth and devices online
+      security:
+        - sessionCookie: []
+        - apiKey: [messages:read]
+      responses:
+        '200':
+          description: Summary. Days are UTC.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /usage/daily:
+    get:
+      tags: [Usage]
+      operationId: getDailyUsage
+      summary: Sent, delivered, failed and received per day
+      security:
+        - sessionCookie: []
+        - apiKey: [messages:read]
+      parameters:
+        - $ref: '#/components/parameters/UsageFrom'
+        - $ref: '#/components/parameters/UsageTo'
+        - name: deviceId
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: One row per UTC day in the range, including days with zero activity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyUsageList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /usage/devices:
+    get:
+      tags: [Usage]
+      operationId: getDeviceUsage
+      summary: Sent, delivered, failed and received per device
+      security:
+        - sessionCookie: []
+        - apiKey: [messages:read]
+      parameters:
+        - $ref: '#/components/parameters/UsageFrom'
+        - $ref: '#/components/parameters/UsageTo'
+      responses:
+        '200':
+          description: One row per current device.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceUsageList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /health:
+    get:
+      tags: [Health]
+      operationId: getHealth
+      summary: Service health
+      security: []
+      responses:
+        '200':
+          description: Healthy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          description: A dependency is down.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+webhooks:
+  message.sent:
+    post:
+      operationId: onMessageSent
+      summary: A phone handed the message to the carrier
+      tags: [Webhooks]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SignatureHeader'
+        - $ref: '#/components/parameters/EventIdHeader'
+        - $ref: '#/components/parameters/EventTypeHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageWebhookEvent'
+      responses:
+        '200':
+          description: Any 2xx marks the delivery as succeeded.
+  message.delivered:
+    post:
+      operationId: onMessageDelivered
+      summary: The carrier confirmed delivery to the handset
+      tags: [Webhooks]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SignatureHeader'
+        - $ref: '#/components/parameters/EventIdHeader'
+        - $ref: '#/components/parameters/EventTypeHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageWebhookEvent'
+      responses:
+        '200':
+          description: Any 2xx marks the delivery as succeeded.
+  message.failed:
+    post:
+      operationId: onMessageFailed
+      summary: The message could not be sent or delivered
+      tags: [Webhooks]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SignatureHeader'
+        - $ref: '#/components/parameters/EventIdHeader'
+        - $ref: '#/components/parameters/EventTypeHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageWebhookEvent'
+      responses:
+        '200':
+          description: Any 2xx marks the delivery as succeeded.
+  inbox.received:
+    post:
+      operationId: onInboxReceived
+      summary: A phone received an SMS, data SMS or MMS
+      tags: [Webhooks]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SignatureHeader'
+        - $ref: '#/components/parameters/EventIdHeader'
+        - $ref: '#/components/parameters/EventTypeHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboxWebhookEvent'
+      responses:
+        '200':
+          description: Any 2xx marks the delivery as succeeded.
+  device.online:
+    post:
+      operationId: onDeviceOnline
+      summary: A device came back online
+      tags: [Webhooks]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SignatureHeader'
+        - $ref: '#/components/parameters/EventIdHeader'
+        - $ref: '#/components/parameters/EventTypeHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceWebhookEvent'
+      responses:
+        '200':
+          description: Any 2xx marks the delivery as succeeded.
+  device.offline:
+    post:
+      operationId: onDeviceOffline
+      summary: A device missed its heartbeats
+      tags: [Webhooks]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SignatureHeader'
+        - $ref: '#/components/parameters/EventIdHeader'
+        - $ref: '#/components/parameters/EventTypeHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceWebhookEvent'
+      responses:
+        '200':
+          description: Any 2xx marks the delivery as succeeded.
+  opt_out.received:
+    post:
+      operationId: onOptOutReceived
+      summary: A received SMS matched an opt-out keyword such as STOP
+      tags: [Webhooks]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SignatureHeader'
+        - $ref: '#/components/parameters/EventIdHeader'
+        - $ref: '#/components/parameters/EventTypeHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OptOutWebhookEvent'
+      responses:
+        '200':
+          description: Any 2xx marks the delivery as succeeded.
+  webhook.test:
+    post:
+      operationId: onWebhookTest
+      summary: Sent only by the send test event operation
+      tags: [Webhooks]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SignatureHeader'
+        - $ref: '#/components/parameters/EventIdHeader'
+        - $ref: '#/components/parameters/EventTypeHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestWebhookEvent'
+      responses:
+        '200':
+          description: Any 2xx marks the delivery as succeeded.
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: homing_session
+      description: httpOnly session cookie set by sign up and sign in. Has every scope.
+    apiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: hk_live_<secret>
+      description: |
+        API key created in the console. Scopes: `messages:send`, `messages:read`, `inbox:read`,
+        `webhooks:manage`, `devices:manage`, `admin`. `admin` grants every scope.
+  headers:
+    SetSessionCookie:
+      description: '`homing_session=<token>; HttpOnly; Secure; SameSite=Lax; Path=/`'
+      schema:
+        type: string
+    IdempotentReplayed:
+      description: Present and `true` when the response is a replay.
+      schema:
+        type: string
+        const: 'true'
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      schema:
+        type: integer
+  parameters:
+    ApiKeyId:
+      name: apiKeyId
+      in: path
+      required: true
+      schema:
+        type: string
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      schema:
+        type: string
+    MessageId:
+      name: messageId
+      in: path
+      required: true
+      schema:
+        type: string
+    InboxMessageId:
+      name: inboxMessageId
+      in: path
+      required: true
+      schema:
+        type: string
+    WebhookId:
+      name: webhookId
+      in: path
+      required: true
+      schema:
+        type: string
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from `nextCursor` of the previous page.
+      schema:
+        type: string
+        maxLength: 200
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    CreatedFrom:
+      name: createdFrom
+      in: query
+      description: Inclusive lower bound on `createdAt`.
+      schema:
+        type: string
+        format: date-time
+    CreatedTo:
+      name: createdTo
+      in: query
+      description: Exclusive upper bound on `createdAt`.
+      schema:
+        type: string
+        format: date-time
+    UsageFrom:
+      name: from
+      in: query
+      required: true
+      description: First UTC day, inclusive.
+      schema:
+        type: string
+        format: date
+    UsageTo:
+      name: to
+      in: query
+      required: true
+      description: Last UTC day, inclusive. At most 92 days after `from`.
+      schema:
+        type: string
+        format: date
+    SignatureHeader:
+      name: Homing-Signature
+      in: header
+      required: true
+      description: '`t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">`. See WEBHOOKS.md.'
+      schema:
+        type: string
+    EventIdHeader:
+      name: Homing-Event-Id
+      in: header
+      required: true
+      schema:
+        type: string
+    EventTypeHeader:
+      name: Homing-Event-Type
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/WebhookEventType'
+  responses:
+    BadRequest:
+      description: The request is malformed or failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing, expired or invalid credentials.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: The credentials lack the required scope.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: The resource does not exist in this account.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: The request conflicts with the current state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    PayloadTooLarge:
+      description: The request body is too large.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooManyRequests:
+      description: Rate limit exceeded.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [statusCode, message, error, timestamp, path]
+      properties:
+        statusCode:
+          type: integer
+          examples: [400]
+        message:
+          description: Human readable reason, or a list of validation errors.
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        error:
+          type: string
+          examples: [Bad Request]
+        timestamp:
+          type: string
+          format: date-time
+        path:
+          type: string
+          examples: [/api/v1/messages]
+    Scope:
+      type: string
+      enum: [messages:send, messages:read, inbox:read, webhooks:manage, devices:manage, admin]
+    PhoneNumber:
+      type: string
+      description: E.164 number such as `+2348012345678`, or a short code.
+      pattern: '^\+?[0-9]{3,15}$'
+      examples: ['+2348012345678']
+    Timestamp:
+      type: string
+      format: date-time
+    User:
+      type: object
+      required: [id, email, name, role, createdAt]
+      properties:
+        id:
+          type: string
+          examples: [usr_V1StGXR8Z5jdHi6BmyT]
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          type: string
+          enum: [owner, member]
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+    RoutingStrategy:
+      type: string
+      description: How messages without `deviceId` are spread across online devices.
+      enum: [round_robin, least_used]
+    Account:
+      type: object
+      required: [id, name, routingStrategy, createdAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        routingStrategy:
+          $ref: '#/components/schemas/RoutingStrategy'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+    Session:
+      type: object
+      required: [user, account]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        account:
+          $ref: '#/components/schemas/Account'
+    SignUpRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, name]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+          minLength: 10
+          maxLength: 128
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        accountName:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Defaults to the user's name.
+    SignInRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+    UpdateAccountRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        routingStrategy:
+          $ref: '#/components/schemas/RoutingStrategy'
+    ApiKey:
+      type: object
+      required: [id, name, prefix, scopes, createdAt, lastUsedAt, expiresAt, revokedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        prefix:
+          type: string
+          description: First characters of the secret, for recognising the key.
+          examples: [hk_live_V1StGX]
+        scopes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Scope'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        lastUsedAt:
+          type: [string, 'null']
+          format: date-time
+        expiresAt:
+          type: [string, 'null']
+          format: date-time
+        revokedAt:
+          type: [string, 'null']
+          format: date-time
+    ApiKeyWithSecret:
+      allOf:
+        - $ref: '#/components/schemas/ApiKey'
+        - type: object
+          required: [secret]
+          properties:
+            secret:
+              type: string
+              description: The full key. Store it now; it is never shown again.
+              examples: [hk_live_V1StGXR8Z5jdHi6BmyTq2nB7xKp0LwEa]
+    ApiKeyList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApiKey'
+    CreateApiKeyRequest:
+      type: object
+      additionalProperties: false
+      required: [name, scopes]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        scopes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/Scope'
+        expiresAt:
+          type: string
+          format: date-time
+          description: Optional expiry in the future.
+    DeviceStatus:
+      type: string
+      description: '`online` while heartbeats arrive; `offline` after missing them.'
+      enum: [online, offline]
+    NetworkType:
+      type: string
+      enum: [wifi, cellular, ethernet, none, unknown]
+    Sim:
+      type: object
+      required: [slot, carrier, phoneNumber, signalLevel, enabled, dailyLimit, sentToday]
+      properties:
+        slot:
+          type: integer
+          minimum: 0
+          maximum: 7
+        carrier:
+          type: [string, 'null']
+        phoneNumber:
+          type: [string, 'null']
+        signalLevel:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 4
+        enabled:
+          type: boolean
+          description: Disabled SIMs are never picked for sending.
+        dailyLimit:
+          type: [integer, 'null']
+          minimum: 1
+          description: Maximum messages per UTC day on this SIM. `null` means no cap.
+        sentToday:
+          type: integer
+          minimum: 0
+    DeviceHealth:
+      type: object
+      required: [batteryLevel, charging, networkType, reportedAt]
+      properties:
+        batteryLevel:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 100
+        charging:
+          type: [boolean, 'null']
+        networkType:
+          $ref: '#/components/schemas/NetworkType'
+        reportedAt:
+          $ref: '#/components/schemas/Timestamp'
+    Device:
+      type: object
+      required: [id, name, status, paused, model, manufacturer, osVersion, appVersion, dailyLimit, sentToday, lastSeenAt, health, sims, createdAt]
+      properties:
+        id:
+          type: string
+          examples: [dev_4f90d13a42]
+        name:
+          type: string
+        status:
+          $ref: '#/components/schemas/DeviceStatus'
+        paused:
+          type: boolean
+          description: Paused devices keep receiving but are never picked for sending.
+        model:
+          type: [string, 'null']
+        manufacturer:
+          type: [string, 'null']
+        osVersion:
+          type: [string, 'null']
+        appVersion:
+          type: [string, 'null']
+        dailyLimit:
+          type: [integer, 'null']
+          minimum: 1
+          description: Maximum messages per UTC day across all SIMs. `null` means no cap.
+        sentToday:
+          type: integer
+          minimum: 0
+        lastSeenAt:
+          type: [string, 'null']
+          format: date-time
+        health:
+          oneOf:
+            - $ref: '#/components/schemas/DeviceHealth'
+            - type: 'null'
+        sims:
+          type: array
+          items:
+            $ref: '#/components/schemas/Sim'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+    DeviceList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Device'
+    SimSettingsInput:
+      type: object
+      additionalProperties: false
+      required: [slot]
+      properties:
+        slot:
+          type: integer
+          minimum: 0
+          maximum: 7
+        enabled:
+          type: boolean
+        dailyLimit:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000
+    UpdateDeviceRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        paused:
+          type: boolean
+        dailyLimit:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100000
+        sims:
+          type: array
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/SimSettingsInput'
+    CreatePairingCodeRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        deviceName:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Name given to the device when it pairs. The phone may override it.
+    PairingCode:
+      type: object
+      required: [code, expiresAt, pairingUri]
+      properties:
+        code:
+          type: string
+          description: Single-use code the phone types in. Valid for 10 minutes.
+          examples: [K7PM-4XQ2]
+        expiresAt:
+          $ref: '#/components/schemas/Timestamp'
+        pairingUri:
+          type: string
+          description: Encode as a QR code for the app to scan.
+          examples: ['homing://pair?server=https%3A%2F%2Fapi.homingsms.com&code=K7PM-4XQ2']
+    MessageType:
+      type: string
+      enum: [sms, data, mms]
+    MessageState:
+      type: string
+      description: |
+        `scheduled` waits for `scheduleAt`. `pending` waits in the cloud queue. `leased` was pulled by a
+        device. `queued` is in the phone's send queue. `sending`, `sent` and `delivered` follow the
+        carrier. `failed`, `cancelled`, `expired` and `delivered` are final.
+      enum: [scheduled, pending, leased, queued, sending, sent, delivered, failed, cancelled, expired]
+    MessagePriority:
+      type: string
+      description: '`otp` messages jump ahead of `normal` traffic on every device.'
+      enum: [normal, otp]
+    Metadata:
+      type: object
+      description: Up to 20 string pairs of your own, returned on the message and its webhooks.
+      maxProperties: 20
+      additionalProperties:
+        type: string
+        maxLength: 500
+    SendMessageOptions:
+      type: object
+      required: [to]
+      properties:
+        to:
+          $ref: '#/components/schemas/PhoneNumber'
+        idempotencyKey:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Unique per account. Retrying with the same key never sends twice.
+        deviceId:
+          type: string
+          description: Send from this device only. Without it Homing routes the message.
+        simSlot:
+          type: integer
+          minimum: 0
+          maximum: 7
+          description: Send from this SIM slot. Requires `deviceId`.
+        scheduleAt:
+          type: string
+          format: date-time
+          description: Hold the message until this time.
+        validUntil:
+          type: string
+          format: date-time
+          description: Expire the message if it has not reached a phone by this time.
+        priority:
+          $ref: '#/components/schemas/MessagePriority'
+        deliveryReport:
+          type: boolean
+          default: true
+          description: Ask the carrier for a delivery report.
+        metadata:
+          $ref: '#/components/schemas/Metadata'
+    SendSmsRequest:
+      allOf:
+        - $ref: '#/components/schemas/SendMessageOptions'
+        - type: object
+          required: [type, text]
+          properties:
+            type:
+              type: string
+              const: sms
+            text:
+              type: string
+              minLength: 1
+              maxLength: 1600
+              description: Long texts are split into parts by the phone.
+    SendDataSmsRequest:
+      allOf:
+        - $ref: '#/components/schemas/SendMessageOptions'
+        - type: object
+          required: [type, data, port]
+          properties:
+            type:
+              type: string
+              const: data
+            data:
+              type: string
+              contentEncoding: base64
+              minLength: 1
+              maxLength: 188
+              description: Base64 payload, at most 140 bytes decoded.
+            port:
+              type: integer
+              minimum: 1
+              maximum: 65535
+    MessageAttachmentInput:
+      type: object
+      additionalProperties: false
+      required: [contentType, data]
+      properties:
+        contentType:
+          type: string
+          maxLength: 100
+          examples: [image/jpeg]
+        name:
+          type: string
+          maxLength: 255
+        data:
+          type: string
+          contentEncoding: base64
+          description: Base64 bytes. All attachments together may be at most 1 MiB decoded.
+    SendMmsRequest:
+      allOf:
+        - $ref: '#/components/schemas/SendMessageOptions'
+        - type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              const: mms
+            subject:
+              type: string
+              maxLength: 80
+            text:
+              type: string
+              maxLength: 1600
+            attachments:
+              type: array
+              maxItems: 10
+              items:
+                $ref: '#/components/schemas/MessageAttachmentInput'
+          description: Needs `text` or at least one attachment.
+    SendMessageRequest:
+      oneOf:
+        - $ref: '#/components/schemas/SendSmsRequest'
+        - $ref: '#/components/schemas/SendDataSmsRequest'
+        - $ref: '#/components/schemas/SendMmsRequest'
+    MessageAttachment:
+      type: object
+      required: [id, contentType, name, size]
+      properties:
+        id:
+          type: string
+        contentType:
+          type: string
+        name:
+          type: [string, 'null']
+        size:
+          type: integer
+          description: Bytes.
+    MessageError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable code such as `generic_failure`, `no_service`, `radio_off`, `lease_expired`, `invalid_recipient`.
+        message:
+          type: string
+    Message:
+      type: object
+      required: [id, type, to, text, data, port, subject, attachments, state, priority, deviceId, simSlot, idempotencyKey, scheduleAt, validUntil, deliveryReport, metadata, attempts, partsCount, error, createdAt, updatedAt, sentAt, deliveredAt, failedAt]
+      properties:
+        id:
+          type: string
+          examples: [msg_V1StGXR8Z5jdHi6BmyT]
+        type:
+          $ref: '#/components/schemas/MessageType'
+        to:
+          $ref: '#/components/schemas/PhoneNumber'
+        text:
+          type: [string, 'null']
+        data:
+          type: [string, 'null']
+          contentEncoding: base64
+        port:
+          type: [integer, 'null']
+        subject:
+          type: [string, 'null']
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageAttachment'
+        state:
+          $ref: '#/components/schemas/MessageState'
+        priority:
+          $ref: '#/components/schemas/MessagePriority'
+        deviceId:
+          type: [string, 'null']
+          description: Device the message is routed or leased to.
+        simSlot:
+          type: [integer, 'null']
+        idempotencyKey:
+          type: [string, 'null']
+        scheduleAt:
+          type: [string, 'null']
+          format: date-time
+        validUntil:
+          type: [string, 'null']
+          format: date-time
+        deliveryReport:
+          type: boolean
+        metadata:
+          $ref: '#/components/schemas/Metadata'
+        attempts:
+          type: integer
+          description: Number of times a device leased the message.
+        partsCount:
+          type: [integer, 'null']
+        error:
+          oneOf:
+            - $ref: '#/components/schemas/MessageError'
+            - type: 'null'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+        sentAt:
+          type: [string, 'null']
+          format: date-time
+        deliveredAt:
+          type: [string, 'null']
+          format: date-time
+        failedAt:
+          type: [string, 'null']
+          format: date-time
+    MessageEvent:
+      type: object
+      required: [state, at, deviceId, simSlot, error]
+      properties:
+        state:
+          $ref: '#/components/schemas/MessageState'
+        at:
+          $ref: '#/components/schemas/Timestamp'
+        deviceId:
+          type: [string, 'null']
+        simSlot:
+          type: [integer, 'null']
+        error:
+          oneOf:
+            - $ref: '#/components/schemas/MessageError'
+            - type: 'null'
+    MessageDetail:
+      allOf:
+        - $ref: '#/components/schemas/Message'
+        - type: object
+          required: [events]
+          properties:
+            events:
+              type: array
+              description: State timeline, oldest first.
+              items:
+                $ref: '#/components/schemas/MessageEvent'
+    MessagePage:
+      type: object
+      required: [data, nextCursor]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        nextCursor:
+          type: [string, 'null']
+    InboxAttachment:
+      type: object
+      required: [id, contentType, name, size]
+      properties:
+        id:
+          type: string
+        contentType:
+          type: string
+        name:
+          type: [string, 'null']
+        size:
+          type: integer
+    InboxMessage:
+      type: object
+      required: [id, type, from, to, deviceId, simSlot, text, data, port, subject, attachments, receivedAt, createdAt]
+      properties:
+        id:
+          type: string
+          examples: [inb_V1StGXR8Z5jdHi6BmyT]
+        type:
+          $ref: '#/components/schemas/MessageType'
+        from:
+          type: string
+          description: Sender number or alphanumeric sender ID.
+        to:
+          type: [string, 'null']
+          description: The receiving SIM's number when the phone knows it.
+        deviceId:
+          type: [string, 'null']
+        simSlot:
+          type: [integer, 'null']
+        text:
+          type: [string, 'null']
+        data:
+          type: [string, 'null']
+          contentEncoding: base64
+        port:
+          type: [integer, 'null']
+        subject:
+          type: [string, 'null']
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/InboxAttachment'
+        receivedAt:
+          $ref: '#/components/schemas/Timestamp'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+    InboxPage:
+      type: object
+      required: [data, nextCursor]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/InboxMessage'
+        nextCursor:
+          type: [string, 'null']
+    WebhookEventType:
+      type: string
+      enum: [message.sent, message.delivered, message.failed, inbox.received, device.online, device.offline, opt_out.received, webhook.test]
+    SubscribableEventType:
+      type: string
+      enum: [message.sent, message.delivered, message.failed, inbox.received, device.online, device.offline, opt_out.received]
+    WebhookEndpoint:
+      type: object
+      required: [id, url, description, events, enabled, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          examples: [whk_V1StGXR8Z5jdHi6BmyT]
+        url:
+          type: string
+          format: uri
+        description:
+          type: [string, 'null']
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubscribableEventType'
+        enabled:
+          type: boolean
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+    WebhookEndpointWithSecret:
+      allOf:
+        - $ref: '#/components/schemas/WebhookEndpoint'
+        - type: object
+          required: [secret]
+          properties:
+            secret:
+              type: string
+              examples: [whsec_3fQ1x9Lk2mN8pR4tV6yB0cD5]
+    WebhookEndpointList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookEndpoint'
+    CreateWebhookRequest:
+      type: object
+      additionalProperties: false
+      required: [url, events]
+      properties:
+        url:
+          type: string
+          format: uri
+          maxLength: 2048
+          description: HTTPS URL. Plain HTTP is accepted only when the server allows it in development.
+        events:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/SubscribableEventType'
+        description:
+          type: string
+          maxLength: 200
+        enabled:
+          type: boolean
+          default: true
+    UpdateWebhookRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          format: uri
+          maxLength: 2048
+        events:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/SubscribableEventType'
+        description:
+          type: [string, 'null']
+          maxLength: 200
+        enabled:
+          type: boolean
+    WebhookSecret:
+      type: object
+      required: [secret]
+      properties:
+        secret:
+          type: string
+    WebhookDeliveryStatus:
+      type: string
+      description: '`retrying` has failed at least once and has attempts left.'
+      enum: [pending, retrying, succeeded, failed]
+    WebhookDelivery:
+      type: object
+      required: [id, endpointId, eventId, eventType, status, attempts, lastStatusCode, lastResponseBody, lastError, nextAttemptAt, deliveredAt, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          examples: [whd_V1StGXR8Z5jdHi6BmyT]
+        endpointId:
+          type: string
+        eventId:
+          type: string
+        eventType:
+          $ref: '#/components/schemas/WebhookEventType'
+        status:
+          $ref: '#/components/schemas/WebhookDeliveryStatus'
+        attempts:
+          type: integer
+        lastStatusCode:
+          type: [integer, 'null']
+        lastResponseBody:
+          type: [string, 'null']
+          description: First 1 KiB of the last response body.
+        lastError:
+          type: [string, 'null']
+          description: Network or timeout error of the last attempt.
+        nextAttemptAt:
+          type: [string, 'null']
+          format: date-time
+        deliveredAt:
+          type: [string, 'null']
+          format: date-time
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+    WebhookDeliveryPage:
+      type: object
+      required: [data, nextCursor]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookDelivery'
+        nextCursor:
+          type: [string, 'null']
+    UsageCounts:
+      type: object
+      required: [sent, delivered, failed, received]
+      properties:
+        sent:
+          type: integer
+        delivered:
+          type: integer
+        failed:
+          type: integer
+        received:
+          type: integer
+    UsageSummary:
+      type: object
+      required: [today, queue, devices]
+      properties:
+        today:
+          $ref: '#/components/schemas/UsageCounts'
+        queue:
+          type: object
+          required: [scheduled, pending, inFlight]
+          properties:
+            scheduled:
+              type: integer
+            pending:
+              type: integer
+            inFlight:
+              type: integer
+              description: Messages in `leased`, `queued` or `sending`.
+        devices:
+          type: object
+          required: [online, total]
+          properties:
+            online:
+              type: integer
+            total:
+              type: integer
+    DailyUsage:
+      allOf:
+        - type: object
+          required: [date]
+          properties:
+            date:
+              type: string
+              format: date
+        - $ref: '#/components/schemas/UsageCounts'
+    DailyUsageList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyUsage'
+    DeviceUsage:
+      allOf:
+        - type: object
+          required: [deviceId, deviceName]
+          properties:
+            deviceId:
+              type: string
+            deviceName:
+              type: string
+        - $ref: '#/components/schemas/UsageCounts'
+    DeviceUsageList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeviceUsage'
+    Health:
+      type: object
+      required: [status, version, time, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        version:
+          type: string
+        time:
+          $ref: '#/components/schemas/Timestamp'
+        checks:
+          type: object
+          required: [database, redis]
+          properties:
+            database:
+              type: string
+              enum: [up, down]
+            redis:
+              type: string
+              enum: [up, down]
+    WebhookEventEnvelope:
+      type: object
+      required: [id, type, createdAt, accountId, data]
+      properties:
+        id:
+          type: string
+          description: Unique event ID. Use it to ignore duplicates.
+          examples: [evt_V1StGXR8Z5jdHi6BmyT]
+        type:
+          $ref: '#/components/schemas/WebhookEventType'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        accountId:
+          type: string
+        data:
+          type: object
+    MessageWebhookEvent:
+      allOf:
+        - $ref: '#/components/schemas/WebhookEventEnvelope'
+        - type: object
+          required: [type, data]
+          properties:
+            type:
+              type: string
+              enum: [message.sent, message.delivered, message.failed]
+            data:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  $ref: '#/components/schemas/Message'
+    InboxWebhookEvent:
+      allOf:
+        - $ref: '#/components/schemas/WebhookEventEnvelope'
+        - type: object
+          required: [type, data]
+          properties:
+            type:
+              type: string
+              const: inbox.received
+            data:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  $ref: '#/components/schemas/InboxMessage'
+    DeviceWebhookEvent:
+      allOf:
+        - $ref: '#/components/schemas/WebhookEventEnvelope'
+        - type: object
+          required: [type, data]
+          properties:
+            type:
+              type: string
+              enum: [device.online, device.offline]
+            data:
+              type: object
+              required: [device]
+              properties:
+                device:
+                  type: object
+                  required: [id, name, status, lastSeenAt]
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+                    status:
+                      $ref: '#/components/schemas/DeviceStatus'
+                    lastSeenAt:
+                      type: [string, 'null']
+                      format: date-time
+    OptOutWebhookEvent:
+      allOf:
+        - $ref: '#/components/schemas/WebhookEventEnvelope'
+        - type: object
+          required: [type, data]
+          properties:
+            type:
+              type: string
+              const: opt_out.received
+            data:
+              type: object
+              required: [phoneNumber, keyword, inboxMessageId, deviceId, receivedAt]
+              properties:
+                phoneNumber:
+                  type: string
+                keyword:
+                  type: string
+                  examples: [STOP]
+                inboxMessageId:
+                  type: string
+                deviceId:
+                  type: [string, 'null']
+                receivedAt:
+                  $ref: '#/components/schemas/Timestamp'
+    TestWebhookEvent:
+      allOf:
+        - $ref: '#/components/schemas/WebhookEventEnvelope'
+        - type: object
+          required: [type, data]
+          properties:
+            type:
+              type: string
+              const: webhook.test
+            data:
+              type: object
+              required: [endpointId, message]
+              properties:
+                endpointId:
+                  type: string
+                message:
+                  type: string

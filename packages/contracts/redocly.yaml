@@ -1,0 +1,5 @@
+extends:
+  - recommended-strict
+rules:
+  no-unused-components: off
+  info-license-strict: error

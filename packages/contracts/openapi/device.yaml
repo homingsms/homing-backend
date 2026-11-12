@@ -1,0 +1,690 @@
+openapi: 3.1.0
+info:
+  title: Homing Cloud Device Protocol
+  version: 1.0.0
+  summary: How a Homing phone talks to Homing Cloud.
+  description: |
+    The phone pairs once with a pairing code and receives a device token. Every other call sends
+    `Authorization: Bearer hd_<token>`.
+
+    Loop on the phone:
+    1. Send a heartbeat every `heartbeatIntervalSeconds` (default 60). Missing three marks the device offline.
+    2. Pull messages when woken by an FCM data message, after each heartbeat that reports
+       `pendingMessages > 0`, and every `pullIntervalSeconds` as a fallback.
+    3. Report state transitions in batches as they happen. Reporting `queued` confirms the lease;
+       a lease not confirmed before `leaseExpiresAt` returns the message to the cloud queue.
+    4. Push received SMS, data SMS and MMS in batches. `localId` makes pushes safe to retry.
+    5. Fetch settings when woken with reason `settings_changed` or when a heartbeat reports a newer
+       `settingsVersion`.
+
+    A `401` on any call means the device was removed: the phone should unpair and stop calling.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Homing-Proprietary
+servers:
+  - url: https://api.homingsms.com/api/v1
+    description: Production. Local development serves the same paths at http://localhost:7010/api/v1.
+tags:
+  - name: Pairing
+    description: Exchange a pairing code for a device token.
+  - name: Presence
+    description: Heartbeat and push token.
+  - name: Outgoing
+    description: Lease outgoing messages and report their state.
+  - name: Incoming
+    description: Upload received messages.
+  - name: Settings
+    description: Remote settings pushed from the console.
+security:
+  - deviceToken: []
+paths:
+  /device/pair:
+    post:
+      tags: [Pairing]
+      operationId: pairDevice
+      summary: Pair with a one-time code
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PairRequest'
+      responses:
+        '201':
+          description: Paired. Store `deviceToken` in encrypted storage; it is never shown again.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PairResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Unknown, used or expired pairing code.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /device/heartbeat:
+    post:
+      tags: [Presence]
+      operationId: sendHeartbeat
+      summary: Report health and stay online
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HeartbeatRequest'
+      responses:
+        '200':
+          description: Heartbeat recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeartbeatResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /device/fcm-token:
+    put:
+      tags: [Presence]
+      operationId: updateFcmToken
+      summary: Replace or clear the FCM registration token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FcmTokenRequest'
+      responses:
+        '204':
+          description: Saved.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /device/messages/pull:
+    post:
+      tags: [Outgoing]
+      operationId: pullMessages
+      summary: Lease the next messages to send
+      description: |
+        Returns up to `limit` messages, `otp` first, then oldest first. Each message is leased to this
+        device until `leaseExpiresAt`; no other device can receive it during the lease. The cloud picks
+        the SIM in `simSlot` within the device and SIM daily limits. An empty list means nothing to do.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PullRequest'
+      responses:
+        '200':
+          description: Leased messages.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /device/messages/states:
+    post:
+      tags: [Outgoing]
+      operationId: reportMessageStates
+      summary: Report state transitions in a batch
+      description: |
+        Reports are applied in order. Repeating an already recorded state returns `duplicate`, so a
+        batch can be retried safely. Allowed device states: `queued`, `sending`, `sent`, `delivered`,
+        `failed`. A message the cloud cancelled returns `rejected` with reason `cancelled`; the phone
+        must drop it if it has not been sent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StateReportRequest'
+      responses:
+        '200':
+          description: Result per report, in request order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StateReportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /device/inbox:
+    post:
+      tags: [Incoming]
+      operationId: pushInbox
+      summary: Upload received messages in a batch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboxPushRequest'
+      responses:
+        '200':
+          description: Result per message, in request order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxPushResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          description: Batch too large. Split it and retry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /device/settings:
+    get:
+      tags: [Settings]
+      operationId: getDeviceSettings
+      summary: Fetch remote settings
+      responses:
+        '200':
+          description: Current settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+components:
+  securitySchemes:
+    deviceToken:
+      type: http
+      scheme: bearer
+      bearerFormat: hd_<secret>
+      description: Device token returned by `POST /device/pair`.
+  responses:
+    BadRequest:
+      description: The request is malformed or failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing or invalid device token, or the device was removed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooManyRequests:
+      description: Rate limit exceeded. Wait for `Retry-After` seconds.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [statusCode, message, error, timestamp, path]
+      properties:
+        statusCode:
+          type: integer
+        message:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        error:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        path:
+          type: string
+    Timestamp:
+      type: string
+      format: date-time
+    SimSlot:
+      type: integer
+      minimum: 0
+      maximum: 7
+    MessageType:
+      type: string
+      enum: [sms, data, mms]
+    NetworkType:
+      type: string
+      enum: [wifi, cellular, ethernet, none, unknown]
+    SimInfo:
+      type: object
+      additionalProperties: false
+      required: [slot]
+      properties:
+        slot:
+          $ref: '#/components/schemas/SimSlot'
+        carrier:
+          type: [string, 'null']
+          maxLength: 100
+        phoneNumber:
+          type: [string, 'null']
+          maxLength: 32
+        iccid:
+          type: [string, 'null']
+          maxLength: 32
+    PairRequest:
+      type: object
+      additionalProperties: false
+      required: [code, appVersion, sims]
+      properties:
+        code:
+          type: string
+          minLength: 4
+          maxLength: 16
+          description: Pairing code, with or without the dash, any case.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Overrides the name chosen when the code was created.
+        model:
+          type: string
+          maxLength: 100
+        manufacturer:
+          type: string
+          maxLength: 100
+        osVersion:
+          type: string
+          maxLength: 50
+        appVersion:
+          type: string
+          maxLength: 50
+        sims:
+          type: array
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/SimInfo'
+        fcmToken:
+          type: [string, 'null']
+          maxLength: 4096
+    PairResponse:
+      type: object
+      required: [deviceId, deviceToken, accountId, settings]
+      properties:
+        deviceId:
+          type: string
+        deviceToken:
+          type: string
+          examples: [hd_9fQ1x9Lk2mN8pR4tV6yB0cD5eF7gH1jK3lM5nP7q]
+        accountId:
+          type: string
+        settings:
+          $ref: '#/components/schemas/DeviceSettings'
+    SimHealth:
+      type: object
+      additionalProperties: false
+      required: [slot]
+      properties:
+        slot:
+          $ref: '#/components/schemas/SimSlot'
+        carrier:
+          type: [string, 'null']
+          maxLength: 100
+        phoneNumber:
+          type: [string, 'null']
+          maxLength: 32
+        signalLevel:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 4
+        sentToday:
+          type: integer
+          minimum: 0
+          description: Messages the phone sent from this SIM today, including local mode traffic.
+    HeartbeatRequest:
+      type: object
+      additionalProperties: false
+      required: [appVersion, battery, network, sims]
+      properties:
+        appVersion:
+          type: string
+          maxLength: 50
+        battery:
+          type: object
+          additionalProperties: false
+          required: [level, charging]
+          properties:
+            level:
+              type: integer
+              minimum: 0
+              maximum: 100
+            charging:
+              type: boolean
+        network:
+          type: object
+          additionalProperties: false
+          required: [type]
+          properties:
+            type:
+              $ref: '#/components/schemas/NetworkType'
+        sims:
+          type: array
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/SimHealth'
+        localQueueSize:
+          type: integer
+          minimum: 0
+          description: Messages waiting in the phone's own send queue.
+    HeartbeatResponse:
+      type: object
+      required: [serverTime, pendingMessages, settingsVersion]
+      properties:
+        serverTime:
+          $ref: '#/components/schemas/Timestamp'
+        pendingMessages:
+          type: integer
+          description: Messages this device could pull now. Pull when greater than zero.
+        settingsVersion:
+          type: integer
+          description: Fetch settings when this is newer than the stored version.
+    FcmTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [fcmToken]
+      properties:
+        fcmToken:
+          type: [string, 'null']
+          maxLength: 4096
+    PullRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 10
+    DeviceAttachment:
+      type: object
+      required: [contentType, name, data]
+      properties:
+        contentType:
+          type: string
+        name:
+          type: [string, 'null']
+        data:
+          type: string
+          contentEncoding: base64
+    DeviceMessage:
+      type: object
+      required: [id, type, to, text, data, port, subject, attachments, simSlot, priority, deliveryReport, validUntil, attempt, leaseExpiresAt]
+      properties:
+        id:
+          type: string
+        type:
+          $ref: '#/components/schemas/MessageType'
+        to:
+          type: string
+        text:
+          type: [string, 'null']
+        data:
+          type: [string, 'null']
+          contentEncoding: base64
+        port:
+          type: [integer, 'null']
+        subject:
+          type: [string, 'null']
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeviceAttachment'
+        simSlot:
+          type: [integer, 'null']
+          description: SIM to send from. `null` means the phone's default SIM.
+        priority:
+          type: string
+          enum: [normal, otp]
+        deliveryReport:
+          type: boolean
+        validUntil:
+          type: [string, 'null']
+          format: date-time
+          description: Do not start sending after this time; report `failed` with code `expired`.
+        attempt:
+          type: integer
+          minimum: 1
+        leaseExpiresAt:
+          $ref: '#/components/schemas/Timestamp'
+    PullResponse:
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeviceMessage'
+    DeviceReportState:
+      type: string
+      enum: [queued, sending, sent, delivered, failed]
+    StateReport:
+      type: object
+      additionalProperties: false
+      required: [messageId, state, at]
+      properties:
+        messageId:
+          type: string
+        state:
+          $ref: '#/components/schemas/DeviceReportState'
+        at:
+          description: When the transition happened on the phone.
+          $ref: '#/components/schemas/Timestamp'
+        simSlot:
+          $ref: '#/components/schemas/SimSlot'
+        partsCount:
+          type: integer
+          minimum: 1
+          maximum: 255
+        error:
+          type: object
+          additionalProperties: false
+          required: [code]
+          description: Required when `state` is `failed`.
+          properties:
+            code:
+              type: string
+              maxLength: 64
+              examples: [generic_failure, no_service, radio_off, null_pdu, sms_limit_reached, expired]
+            message:
+              type: string
+              maxLength: 500
+    StateReportRequest:
+      type: object
+      additionalProperties: false
+      required: [reports]
+      properties:
+        reports:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/StateReport'
+    StateReportResult:
+      type: object
+      required: [messageId, status, reason]
+      properties:
+        messageId:
+          type: string
+        status:
+          type: string
+          enum: [accepted, duplicate, rejected]
+        reason:
+          type: [string, 'null']
+          enum: [not_found, not_leased_to_device, invalid_transition, cancelled, null]
+    StateReportResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/StateReportResult'
+    InboxAttachmentUpload:
+      type: object
+      additionalProperties: false
+      required: [contentType, data]
+      properties:
+        contentType:
+          type: string
+          maxLength: 100
+        name:
+          type: [string, 'null']
+          maxLength: 255
+        data:
+          type: string
+          contentEncoding: base64
+    InboxUpload:
+      type: object
+      additionalProperties: false
+      required: [localId, type, from, receivedAt]
+      properties:
+        localId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: The phone's own ID for this message. Duplicates are ignored.
+        type:
+          $ref: '#/components/schemas/MessageType'
+        from:
+          type: string
+          minLength: 1
+          maxLength: 32
+        to:
+          type: [string, 'null']
+          maxLength: 32
+        simSlot:
+          $ref: '#/components/schemas/SimSlot'
+        receivedAt:
+          $ref: '#/components/schemas/Timestamp'
+        text:
+          type: string
+          maxLength: 10000
+          description: Required for `sms`. Optional for `mms`.
+        data:
+          type: string
+          contentEncoding: base64
+          maxLength: 512
+          description: Required for `data`.
+        port:
+          type: integer
+          minimum: 0
+          maximum: 65535
+        subject:
+          type: string
+          maxLength: 200
+        attachments:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/InboxAttachmentUpload'
+    InboxPushRequest:
+      type: object
+      additionalProperties: false
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/InboxUpload'
+    InboxPushResult:
+      type: object
+      required: [localId, id, duplicate]
+      properties:
+        localId:
+          type: string
+        id:
+          type: string
+          description: Inbox message ID in Homing Cloud.
+        duplicate:
+          type: boolean
+    InboxPushResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/InboxPushResult'
+    SimSettings:
+      type: object
+      required: [slot, enabled, dailyLimit]
+      properties:
+        slot:
+          $ref: '#/components/schemas/SimSlot'
+        enabled:
+          type: boolean
+        dailyLimit:
+          type: [integer, 'null']
+    DeviceSettings:
+      type: object
+      required: [version, paused, heartbeatIntervalSeconds, pullIntervalSeconds, leaseSeconds, dailyLimit, sims, optOutKeywords]
+      properties:
+        version:
+          type: integer
+          description: Increases on every change.
+        paused:
+          type: boolean
+          description: When true the cloud leases nothing to this device.
+        heartbeatIntervalSeconds:
+          type: integer
+        pullIntervalSeconds:
+          type: integer
+        leaseSeconds:
+          type: integer
+          description: How long a pulled message stays leased before `queued` must be reported.
+        dailyLimit:
+          type: [integer, 'null']
+        sims:
+          type: array
+          items:
+            $ref: '#/components/schemas/SimSettings'
+        optOutKeywords:
+          type: array
+          description: Upper-case keywords. A received SMS whose whole trimmed text matches one is an opt-out.
+          items:
+            type: string
+    FcmWakeData:
+      type: object
+      description: |
+        The `data` map of the FCM message sent to wake the phone. Every value is a string, as FCM
+        requires. Sent with Android priority `high` when an `otp` message is waiting, otherwise `normal`.
+        The phone must not trust it beyond waking up: it always calls the API to learn what to do.
+      required: [kind, reason, deviceId, sentAt]
+      properties:
+        kind:
+          type: string
+          const: homing.wake
+        reason:
+          type: string
+          enum: [messages_pending, settings_changed, device_removed]
+          description: '`messages_pending`: pull now. `settings_changed`: fetch settings. `device_removed`: unpair.'
+        deviceId:
+          type: string
+        sentAt:
+          type: string
+          description: ISO 8601 time the cloud sent the push.

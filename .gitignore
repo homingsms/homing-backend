@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.DS_Store
+.openai/
+setup.sh
+AGENTS.md
+AGENT.md
+CLAUDE.md
+CLAUDE.local.md
+CODEX.md
+CODEX.local.md

@@ -1,0 +1,33 @@
+{
+  "name": "@homing/contracts",
+  "version": "1.0.0",
+  "description": "Homing Cloud API contracts: OpenAPI specs and generated TypeScript types",
+  "type": "module",
+  "scripts": {
+    "generate": "openapi-typescript openapi/public.yaml -o src/generated/public.ts && openapi-typescript openapi/device.yaml -o src/generated/device.ts",
+    "lint": "redocly lint openapi/public.yaml openapi/device.yaml",
+    "typecheck": "tsc --noEmit",
+    "check:generated": "pnpm generate && git diff --exit-code -- src/generated"
+  },
+  "license": "UNLICENSED",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "^11.7.0",
+      "onFail": "download"
+    }
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./openapi/public.yaml": "./openapi/public.yaml",
+    "./openapi/device.yaml": "./openapi/device.yaml",
+    "./package.json": "./package.json"
+  },
+  "private": true,
+  "types": "./src/index.ts",
+  "devDependencies": {
+    "@redocly/cli": "^2.77.0",
+    "openapi-typescript": "^7.13.0",
+    "typescript": "~6.0.3"
+  }
+}

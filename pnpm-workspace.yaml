@@ -1,0 +1,9 @@
+packages:
+  - packages/*
+allowBuilds:
+  bcrypt: true
+  msgpackr-extract: true
+  protobufjs: false
+  '@firebase/util': false
+  esbuild: true
+  '@parcel/watcher': false

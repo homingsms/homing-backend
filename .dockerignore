@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+dist
+coverage
+.git
+.github
+.env
+.env.*
+!.env.example
+test
+docker-compose.yml
+*.md
+!packages/contracts/*.md
+.DS_Store
