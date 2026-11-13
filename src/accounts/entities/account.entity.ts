@@ -1,3 +1,4 @@
+import type { Role } from '@/common/auth/roles';
 import type { accounts, users } from '@/database/schema';
 
 export type AccountRow = typeof accounts.$inferSelect;
@@ -14,13 +15,20 @@ export interface UserResponse {
   id: string;
   email: string;
   name: string;
-  role: UserRow['role'];
+  role: Role;
   createdAt: string;
+}
+
+export interface MembershipResponse {
+  accountId: string;
+  accountName: string;
+  role: Role;
 }
 
 export interface SessionResponse {
   user: UserResponse;
   account: AccountResponse;
+  memberships: MembershipResponse[];
 }
 
 export function toAccountResponse(row: AccountRow): AccountResponse {
@@ -32,12 +40,12 @@ export function toAccountResponse(row: AccountRow): AccountResponse {
   };
 }
 
-export function toUserResponse(row: UserRow): UserResponse {
+export function toUserResponse(row: UserRow, role: Role): UserResponse {
   return {
     id: row.id,
     email: row.email,
     name: row.name,
-    role: row.role,
+    role,
     createdAt: row.createdAt.toISOString(),
   };
 }

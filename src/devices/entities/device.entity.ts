@@ -1,6 +1,7 @@
 import { toIso } from '@/common/dates';
 import type { deviceSims, devices } from '@/database/schema';
 import type { DeviceCapacity } from '@/messages/domain/router';
+import { deriveDeviceStatus, type DeviceStatus, type DeviceStatusReason, type StatusPolicy } from '../domain/device-status';
 
 export type DeviceRow = typeof devices.$inferSelect;
 export type DeviceSimRow = typeof deviceSims.$inferSelect;
@@ -24,7 +25,8 @@ export interface SimResponse {
 export interface DeviceResponse {
   id: string;
   name: string;
-  status: DeviceRow['status'];
+  status: DeviceStatus;
+  statusReasons: DeviceStatusReason[];
   paused: boolean;
   model: string | null;
   manufacturer: string | null;
@@ -43,12 +45,32 @@ export interface DeviceResponse {
   createdAt: string;
 }
 
-export function toDeviceResponse({ device, sims, capacity }: DeviceSnapshot): DeviceResponse {
+export function toDeviceResponse(
+  { device, sims, capacity }: DeviceSnapshot,
+  policy: StatusPolicy,
+  now: Date = new Date(),
+): DeviceResponse {
   const usage = new Map(capacity.sims.map((sim) => [sim.slot, sim.usedToday]));
+  const derived = deriveDeviceStatus(
+    {
+      presence: device.status,
+      paused: device.paused,
+      lastSeenAt: device.lastSeenAt,
+      batteryLevel: device.batteryLevel,
+      charging: device.charging,
+      networkType: device.networkType,
+      healthReported: device.healthReportedAt !== null,
+      sims,
+      capacity,
+    },
+    policy,
+    now,
+  );
   return {
     id: device.id,
     name: device.name,
-    status: device.status,
+    status: derived.status,
+    statusReasons: derived.reasons,
     paused: device.paused,
     model: device.model,
     manufacturer: device.manufacturer,

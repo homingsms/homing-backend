@@ -23,4 +23,9 @@ export class SignUpDto {
   @IsString()
   @Length(1, 100)
   accountName?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(10, 200)
+  inviteToken?: string;
 }

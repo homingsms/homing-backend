@@ -16,7 +16,7 @@ export function configureApp(app: NestExpressApplication): void {
   app.useBodyParser('json', { limit: config.get('BODY_LIMIT') });
   app.use(helmet());
   app.use(cookieParser());
-  const origins = config.get('CORS_ORIGINS');
+  const origins = config.corsOrigins;
   app.enableCors({
     origin: origins.length > 0 ? origins : false,
     credentials: true,

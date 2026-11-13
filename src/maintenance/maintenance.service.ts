@@ -6,8 +6,9 @@ import { messages } from '@/database/schema';
 import { PresenceService } from '@/devices/presence.service';
 import { LeasesService } from '@/leases/leases.service';
 import { DispatcherService } from '@/messages/dispatcher.service';
+import { AccountDeletionService } from '@/accounts/account-deletion.service';
 import { loadMessageResponses, recordMessageEvents } from '@/messages/message-query';
-import { WebhookEventsService } from '@/webhooks/webhook-events.service';
+import { WebhookOutbox } from '@/webhooks/webhook-outbox.service';
 
 const SWEEP_LOCK_KEY = 7_010_001;
 const ROUTE_BATCH = 500;
@@ -19,6 +20,7 @@ export interface SweepReport {
   leaseFailed: number;
   offline: number;
   routed: number;
+  purged: number;
 }
 
 @Injectable()
@@ -33,7 +35,8 @@ export class MaintenanceService implements OnApplicationBootstrap, OnApplication
     private readonly leases: LeasesService,
     private readonly presence: PresenceService,
     private readonly dispatcher: DispatcherService,
-    private readonly webhooks: WebhookEventsService,
+    private readonly outbox: WebhookOutbox,
+    private readonly accountDeletion: AccountDeletionService,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -85,17 +88,12 @@ export class MaintenanceService implements OnApplicationBootstrap, OnApplication
     const promoted = await this.promoteScheduled(now);
     const expired = await this.expireValidity(now);
     const leases = await this.leases.expireLeases(now);
-    for (const message of await loadMessageResponses(this.database.db, leases.failed.map((row) => row.id))) {
-      const accountId = leases.failed.find((row) => row.id === message.id)?.accountId;
-      if (accountId) {
-        await this.webhooks.emit(accountId, 'message.failed', { message });
-      }
-    }
     const offline = await this.presence.markStaleOffline(now);
     for (const [accountId, ids] of this.groupByAccount([...promoted, ...leases.requeued])) {
       await this.dispatcher.dispatch(accountId, ids);
     }
     const routed = await this.dispatcher.dispatchUnassigned(ROUTE_BATCH);
+    const purged = await this.accountDeletion.purgePending(now);
     return {
       promoted: promoted.length,
       expired,
@@ -103,6 +101,7 @@ export class MaintenanceService implements OnApplicationBootstrap, OnApplication
       leaseFailed: leases.failed.length,
       offline,
       routed,
+      purged,
     };
   }
 
@@ -124,8 +123,20 @@ export class MaintenanceService implements OnApplicationBootstrap, OnApplication
         .update(messages)
         .set({ state: 'expired', leaseExpiresAt: null, updatedAt: now })
         .where(and(inArray(messages.state, ['scheduled', 'pending']), lt(messages.validUntil, now)))
-        .returning({ id: messages.id });
+        .returning({ id: messages.id, accountId: messages.accountId });
       await recordMessageEvents(tx, rows.map((row) => ({ messageId: row.id, state: 'expired' as const, at: now })));
+      const expired = await loadMessageResponses(
+        tx,
+        rows.map((row) => row.id),
+      );
+      await this.outbox.add(
+        tx,
+        expired.map((message) => ({
+          accountId: rows.find((row) => row.id === message.id)!.accountId,
+          type: 'message.expired' as const,
+          data: { message },
+        })),
+      );
       return rows.length;
     });
   }

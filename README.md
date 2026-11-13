@@ -17,16 +17,17 @@ NestJS 11 on Express, PostgreSQL 16 with Drizzle ORM and postgres-js, Redis with
 
 | Path | What it holds |
 | --- | --- |
-| `src/accounts` | Sign up, sign in, sessions, account settings |
+| `src/accounts` | Sign up, sign in, sessions, account switching, account settings and deletion |
+| `src/team` | Members, roles (`owner`, `admin`, `member`) and invite links |
 | `src/api-keys` | Scoped `hk_live_` keys, stored as peppered SHA-256 hashes |
-| `src/devices` | Pairing codes, device tokens, heartbeats, presence, remote settings, daily usage |
+| `src/devices` | Pairing codes, device tokens, heartbeats, presence, status and its reasons, remote settings, daily usage |
 | `src/messages` | Sending, idempotency, routing, state machine, timeline, cancel |
 | `src/leases` | Phone pull with row leases, state reports, lease expiry |
 | `src/inbox` | Received SMS, data SMS and MMS, opt-out detection |
-| `src/webhooks` | Endpoints, signing, BullMQ delivery worker, delivery log |
+| `src/webhooks` | Endpoints, transactional outbox and its dispatcher, signing, BullMQ delivery worker with pinned DNS, delivery log |
 | `src/push` | FCM wake-ups, disabled when no Firebase credentials are set |
 | `src/usage` | Dashboard counters |
-| `src/maintenance` | Periodic sweep: scheduled messages, lease and validity expiry, offline devices, routing of waiting messages |
+| `src/maintenance` | Periodic sweep: scheduled messages, lease and validity expiry, offline devices, routing of waiting messages, purging deleted accounts |
 | `src/health`, `src/docs` | Health check and the read-only public spec |
 | `src/database/schema` | Drizzle tables; migrations are generated into `drizzle/` |
 | `test/e2e` | End-to-end tests against real PostgreSQL and Redis |
@@ -99,15 +100,17 @@ Every setting is read through `ConfigService` and validated at startup; see `src
 | --- | --- |
 | `DATABASE_URL`, `DATABASE_POOL_MAX` | PostgreSQL connection, pool of 10 by default |
 | `REDIS_URL`, `QUEUE_PREFIX` | Redis for BullMQ and the key prefix |
-| `CORS_ORIGINS` | Comma separated origins allowed to call the API with cookies, such as the console URL |
+| `CORS_ORIGINS` | Comma separated origins allowed to call the API with cookies, such as the console URL. When unset, development allows `http://localhost:7011` (the local console) and other environments allow none. Set it explicitly in production |
 | `PUBLIC_API_URL` | Base URL encoded into pairing QR codes |
+| `CONSOLE_URL`, `INVITE_TTL_DAYS` | Console base URL used to build invite links (`<CONSOLE_URL>/invite/<token>`), and how long an invite works (7 days) |
 | `SECRET_PEPPER` | Pepper for hashing API keys, device tokens, pairing codes and sessions. Changing it invalidates all of them |
 | `ENCRYPTION_KEY` | AES-256-GCM key for webhook signing secrets at rest |
 | `COOKIE_SECURE` | Defaults to true in production |
-| `THROTTLE_LIMIT`, `AUTH_THROTTLE_LIMIT` | Requests per `THROTTLE_TTL_SECONDS` per account, device or IP; the stricter limit applies to sign up, sign in and pairing |
+| `THROTTLE_LIMIT`, `AUTH_THROTTLE_LIMIT` | Requests per `THROTTLE_TTL_SECONDS` per account, device or IP; the stricter limit applies to sign up, sign in, pairing and invite links. Counters live in Redis under `<QUEUE_PREFIX>:throttle:`, so limits hold across replicas |
 | `LEASE_SECONDS`, `MAX_LEASE_ATTEMPTS` | How long a pulled message waits for `queued`, and how many leases before it fails |
 | `OFFLINE_AFTER_SECONDS`, `MAINTENANCE_INTERVAL_MS` | Presence timeout and sweep interval (0 disables the sweep) |
-| `WEBHOOK_*` | Worker switch, timeout, attempts, backoff, and whether plain HTTP or private network targets are allowed. Keep both off in production |
+| `STALE_HEARTBEAT_SECONDS`, `LOW_BATTERY_PERCENT` | When a heartbeating device is reported `degraded` for a late heartbeat (two heartbeat intervals by default) or low battery (below 15% and not charging) |
+| `WEBHOOK_*` | Worker switch, timeout, attempts, backoff, outbox poll interval and batch (`WEBHOOK_OUTBOX_INTERVAL_MS`, 0 stops the dispatcher), and whether plain HTTP or private network targets are allowed. Keep both off in production; the local `.env` turns them on for development |
 | `FIREBASE_SERVICE_ACCOUNT_BASE64` | Base64 of a Firebase service account JSON. Empty disables push and phones fall back to polling |
 | `TRUST_PROXY` | Set to true behind a reverse proxy so rate limits see the client IP |
 
@@ -119,11 +122,10 @@ docker run --rm --env-file .env homing-cloud node dist/database/migrate.js
 docker run -d --env-file .env -p 7010:7010 homing-cloud
 ```
 
-The image runs as the unprivileged `node` user and has a health check on `/api/v1/health`. Run the migration command once per release before starting the new version. The maintenance sweep uses a PostgreSQL advisory lock, so several replicas can run safely; rate limit counters are kept in memory per replica.
+The image runs as the unprivileged `node` user and has a health check on `/api/v1/health`. Run the migration command once per release before starting the new version. The maintenance sweep uses a PostgreSQL advisory lock and the webhook outbox is claimed with `FOR UPDATE SKIP LOCKED`, so several replicas can run safely; rate limit counters are shared through Redis.
 
 ## Known limits
 
-- Webhook events are emitted after the database transaction commits. If the process dies between the commit and the enqueue, that event is lost; an outbox table would close this gap.
-- Webhook targets are checked against private address ranges before each attempt, but the check and the connection resolve DNS separately.
-- Cancelled and expired messages do not emit webhooks.
+- Invites are not emailed. `POST /team/invites` returns the link once and the console shows it to copy.
+- Webhook delivery is at least once. A delivery whose queue job was lost is queued again after a minute, so receivers should drop duplicates by event `id`.
 - MMS attachments are stored in PostgreSQL, capped at 1 MiB per outgoing message.

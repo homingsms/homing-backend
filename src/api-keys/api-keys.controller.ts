@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
-import { CurrentPrincipal } from '@/common/auth/auth.decorators';
+import { CurrentPrincipal, RequireRole } from '@/common/auth/auth.decorators';
 import type { Principal } from '@/common/auth/principal';
 import { ApiKeysService } from './api-keys.service';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
@@ -14,11 +14,13 @@ export class ApiKeysController {
     return { data: await this.apiKeys.list(principal.accountId) };
   }
 
+  @RequireRole('admin')
   @Post()
   create(@CurrentPrincipal() principal: Principal, @Body() dto: CreateApiKeyDto): Promise<ApiKeyWithSecretResponse> {
     return this.apiKeys.create(principal, dto);
   }
 
+  @RequireRole('admin')
   @Delete(':apiKeyId')
   @HttpCode(HttpStatus.NO_CONTENT)
   revoke(@CurrentPrincipal() principal: Principal, @Param('apiKeyId') id: string): Promise<void> {

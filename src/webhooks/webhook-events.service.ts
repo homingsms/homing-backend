@@ -1,77 +1,38 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Queue } from 'bullmq';
-import { and, arrayContains, eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { AppConfig } from '@/config/app-config.service';
 import { newId } from '@/common/ids';
 import { DatabaseService } from '@/database/database.service';
+import type { DbExecutor } from '@/database/database.types';
 import { webhookDeliveries, webhookEndpoints, webhookEvents } from '@/database/schema';
-import {
-  type SubscribableEventType,
-  TEST_EVENT_TYPE,
-  WEBHOOK_QUEUE,
-  type WebhookEnvelope,
-  type WebhookEventType,
-} from './domain/event-types';
+import { TEST_EVENT_TYPE, WEBHOOK_QUEUE, type WebhookEnvelope } from './domain/event-types';
 import { toDeliveryResponse, type WebhookDeliveryResponse } from './entities/webhook.entity';
 
 export interface DeliveryJob {
   deliveryId: string;
 }
 
-export interface PendingEvent {
-  accountId: string;
-  type: SubscribableEventType;
-  data: Record<string, unknown>;
-}
-
 @Injectable()
 export class WebhookEventsService {
-  private readonly logger = new Logger(WebhookEventsService.name);
-
   constructor(
     private readonly database: DatabaseService,
     private readonly config: AppConfig,
     @InjectQueue(WEBHOOK_QUEUE) private readonly queue: Queue<DeliveryJob>,
   ) {}
 
-  async emit(accountId: string, type: SubscribableEventType, data: Record<string, unknown>): Promise<void> {
-    try {
-      const endpoints = await this.database.db
-        .select({ id: webhookEndpoints.id })
-        .from(webhookEndpoints)
-        .where(
-          and(
-            eq(webhookEndpoints.accountId, accountId),
-            eq(webhookEndpoints.enabled, true),
-            arrayContains(webhookEndpoints.events, [type]),
-          ),
-        );
-      if (endpoints.length === 0) {
-        return;
-      }
-      const deliveryIds = await this.store(accountId, type, data, endpoints.map((endpoint) => endpoint.id));
-      await Promise.all(deliveryIds.map((deliveryId) => this.enqueue(deliveryId, deliveryId)));
-    } catch (error) {
-      this.logger.error(`Could not emit ${type} for ${accountId}: ${String(error)}`);
-    }
-  }
-
-  async emitAll(events: PendingEvent[]): Promise<void> {
-    for (const event of events) {
-      await this.emit(event.accountId, event.type, event.data);
-    }
-  }
-
   async sendTest(accountId: string, endpointId: string): Promise<WebhookDeliveryResponse> {
     await this.assertEndpoint(accountId, endpointId);
-    const [deliveryId] = await this.store(
+    const envelope: WebhookEnvelope = {
+      id: newId('evt'),
+      type: TEST_EVENT_TYPE,
+      createdAt: new Date().toISOString(),
       accountId,
-      TEST_EVENT_TYPE,
-      { endpointId, message: 'This is a test event from Homing Cloud.' },
-      [endpointId],
-    );
+      data: { endpointId, message: 'This is a test event from Homing Cloud.' },
+    };
+    const [deliveryId] = await this.database.db.transaction((tx) => this.storeEvent(tx, envelope, [endpointId]));
     await this.enqueue(deliveryId!, deliveryId!);
     return this.describe(deliveryId!);
   }
@@ -90,39 +51,26 @@ export class WebhookEventsService {
     return this.describe(row.id);
   }
 
-  private async store(
-    accountId: string,
-    type: WebhookEventType,
-    data: Record<string, unknown>,
-    endpointIds: string[],
-  ): Promise<string[]> {
-    const envelope: WebhookEnvelope = {
-      id: newId('evt'),
-      type,
-      createdAt: new Date().toISOString(),
-      accountId,
-      data,
-    };
+  async storeEvent(executor: DbExecutor, envelope: WebhookEnvelope, endpointIds: string[]): Promise<string[]> {
     const deliveryIds = endpointIds.map(() => newId('whd'));
-    await this.database.db.transaction(async (tx) => {
-      await tx.insert(webhookEvents).values({
-        id: envelope.id,
-        accountId,
-        type,
-        payload: { ...envelope },
-      });
-      await tx.insert(webhookDeliveries).values(
-        endpointIds.map((endpointId, index) => ({
-          id: deliveryIds[index]!,
-          endpointId,
-          eventId: envelope.id,
-        })),
-      );
+    await executor.insert(webhookEvents).values({
+      id: envelope.id,
+      accountId: envelope.accountId,
+      type: envelope.type,
+      payload: { ...envelope },
+      createdAt: new Date(envelope.createdAt),
     });
+    await executor.insert(webhookDeliveries).values(
+      endpointIds.map((endpointId, index) => ({
+        id: deliveryIds[index]!,
+        endpointId,
+        eventId: envelope.id,
+      })),
+    );
     return deliveryIds;
   }
 
-  private async enqueue(deliveryId: string, jobId: string): Promise<void> {
+  async enqueue(deliveryId: string, jobId: string): Promise<void> {
     await this.queue.add(
       'deliver',
       { deliveryId },

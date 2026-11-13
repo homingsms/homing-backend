@@ -22,8 +22,10 @@ export const envSchema = z.object({
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
   REDIS_URL: z.string().url(),
   QUEUE_PREFIX: z.string().min(1).default('homing'),
-  CORS_ORIGINS: csv.default([]),
+  CORS_ORIGINS: csv.optional(),
   PUBLIC_API_URL: z.string().url().default('http://localhost:7010'),
+  CONSOLE_URL: z.string().url().default('http://localhost:7011'),
+  INVITE_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(7),
   SECRET_PEPPER: z.string().min(32),
   ENCRYPTION_KEY: z
     .string()
@@ -41,6 +43,8 @@ export const envSchema = z.object({
   HEARTBEAT_INTERVAL_SECONDS: z.coerce.number().int().min(10).default(60),
   PULL_INTERVAL_SECONDS: z.coerce.number().int().min(10).default(300),
   OFFLINE_AFTER_SECONDS: z.coerce.number().int().min(30).default(180),
+  STALE_HEARTBEAT_SECONDS: z.coerce.number().int().min(10).optional(),
+  LOW_BATTERY_PERCENT: z.coerce.number().int().min(1).max(100).default(15),
   MAINTENANCE_INTERVAL_MS: z.coerce.number().int().min(0).default(5000),
   OPT_OUT_KEYWORDS: csv.default(['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT']),
   WEBHOOK_WORKER_ENABLED: bool.default(true),
@@ -49,6 +53,8 @@ export const envSchema = z.object({
   WEBHOOK_BACKOFF_MS: z.coerce.number().int().min(10).default(60000),
   WEBHOOK_ALLOW_HTTP: bool.default(false),
   WEBHOOK_ALLOW_PRIVATE_TARGETS: bool.default(false),
+  WEBHOOK_OUTBOX_INTERVAL_MS: z.coerce.number().int().min(0).default(1000),
+  WEBHOOK_OUTBOX_BATCH: z.coerce.number().int().min(1).max(1000).default(100),
   FIREBASE_SERVICE_ACCOUNT_BASE64: z.string().optional(),
   OPENAPI_SPEC_PATH: z.string().default('packages/contracts/openapi/public.yaml'),
 });

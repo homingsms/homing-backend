@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post } from '@nestjs/common';
-import { CurrentPrincipal, RequireScope } from '@/common/auth/auth.decorators';
+import { CurrentPrincipal, RequireRole, RequireScope } from '@/common/auth/auth.decorators';
 import type { Principal } from '@/common/auth/principal';
 import { DevicesService } from './devices.service';
 import { CreatePairingCodeDto } from './dto/create-pairing-code.dto';
@@ -20,6 +20,7 @@ export class DevicesController {
     return { data: await this.devices.list(principal.accountId) };
   }
 
+  @RequireRole('admin')
   @Post('pairing-codes')
   createPairingCode(
     @CurrentPrincipal() principal: Principal,
@@ -33,6 +34,7 @@ export class DevicesController {
     return this.devices.get(principal.accountId, id);
   }
 
+  @RequireRole('admin')
   @Patch(':deviceId')
   update(
     @CurrentPrincipal() principal: Principal,
@@ -42,6 +44,7 @@ export class DevicesController {
     return this.devices.update(principal.accountId, id, dto);
   }
 
+  @RequireRole('admin')
   @Delete(':deviceId')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@CurrentPrincipal() principal: Principal, @Param('deviceId') id: string): Promise<void> {

@@ -1,6 +1,8 @@
 import type {
   ApiKeyWithSecret,
   HeartbeatResponse,
+  InviteRole,
+  InviteWithLink,
   MessageDetail,
   PairResponse,
   PairingCode,
@@ -26,7 +28,7 @@ export function sessionCookie(response: Response): string {
   return cookie.split(';')[0]!;
 }
 
-export async function signUp(http: App, email = `owner-${nanoid(6)}@example.com`) {
+export async function signUp(http: App, email = `owner-${nanoid(6).toLowerCase()}@example.com`) {
   const response = await request(http)
     .post(`${API}/auth/sign-up`)
     .send({ email, password: 'correct horse battery', name: 'Ada Owner', accountName: 'Ada Shop' })
@@ -86,4 +88,26 @@ export function sendSms(http: App, apiKey: string, body: Record<string, unknown>
 
 export function messageOf(response: Response): MessageDetail {
   return bodyOf<MessageDetail>(response);
+}
+
+export const PASSWORD = 'correct horse battery';
+
+export function inviteToken(invite: InviteWithLink): string {
+  return invite.inviteUrl.split('/invite/')[1]!;
+}
+
+export async function invite(http: App, cookie: string, role: InviteRole, email = `teammate-${nanoid(6).toLowerCase()}@example.com`) {
+  const response = await request(http).post(`${API}/team/invites`).set('Cookie', cookie).send({ email, role }).expect(201);
+  const created = bodyOf<InviteWithLink>(response);
+  return { invite: created, token: inviteToken(created), email };
+}
+
+export async function joinTeam(http: App, ownerCookie: string, role: InviteRole) {
+  const { token, email } = await invite(http, ownerCookie, role);
+  const response = await request(http)
+    .post(`${API}/auth/sign-up`)
+    .send({ email, password: PASSWORD, name: `Team ${role}`, inviteToken: token })
+    .expect(201);
+  const session = bodyOf<Session>(response);
+  return { cookie: sessionCookie(response), session, email, userId: session.user.id };
 }

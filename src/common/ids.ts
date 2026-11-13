@@ -8,6 +8,7 @@ const alphanumeric = customAlphabet(
 export type IdPrefix =
   | 'acc'
   | 'usr'
+  | 'inv'
   | 'ses'
   | 'key'
   | 'dev'

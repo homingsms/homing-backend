@@ -1,3 +1,4 @@
+import type { Role } from './roles';
 import type { Scope } from './scopes';
 
 export interface SessionPrincipal {
@@ -5,6 +6,7 @@ export interface SessionPrincipal {
   accountId: string;
   userId: string;
   sessionId: string;
+  role: Role;
 }
 
 export interface ApiKeyPrincipal {

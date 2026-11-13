@@ -7,11 +7,12 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
-import { AUTH_MODE_KEY, type AuthMode, REQUIRED_SCOPE_KEY } from './auth.decorators';
+import { AUTH_MODE_KEY, type AuthMode, REQUIRED_ROLE_KEY, REQUIRED_SCOPE_KEY } from './auth.decorators';
 import { API_KEY_PREFIX, DEVICE_TOKEN_PREFIX } from './constants';
 import { CredentialsService } from './credentials.service';
 import type { Principal } from './principal';
 import { readBearer, readSessionCookie } from './request-credentials';
+import { hasRole, type Role } from './roles';
 import { ADMIN_SCOPE, type Scope } from './scopes';
 
 @Injectable()
@@ -47,6 +48,12 @@ export class AuthGuard implements CanActivate {
     }
     if (mode === 'session' && principal.kind !== 'session') {
       throw new ForbiddenException('This operation needs a console session');
+    }
+    if (principal.kind === 'session') {
+      const role = this.reflector.getAllAndOverride<Role | undefined>(REQUIRED_ROLE_KEY, targets);
+      if (role && !hasRole(principal.role, role)) {
+        throw new ForbiddenException(`This action needs the ${role} role or higher`);
+      }
     }
     if (principal.kind === 'apiKey') {
       const scope = this.reflector.getAllAndOverride<Scope | undefined>(REQUIRED_SCOPE_KEY, targets) ?? ADMIN_SCOPE;

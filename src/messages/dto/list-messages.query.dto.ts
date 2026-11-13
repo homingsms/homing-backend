@@ -1,5 +1,5 @@
 import { Transform, Type } from 'class-transformer';
-import { IsDate, IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { IsDate, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { PaginationQueryDto } from '@/common/pagination/pagination-query.dto';
 import { MESSAGE_STATES, MESSAGE_TYPES, type MessageState, type MessageType } from '../domain/states';
 import { PHONE_NUMBER_PATTERN } from './send-message.dto';
@@ -17,6 +17,13 @@ export class ListMessagesQueryDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(64)
   deviceId?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(7)
+  simSlot?: number;
 
   @IsOptional()
   @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.replace(/^ /, '+') : value))

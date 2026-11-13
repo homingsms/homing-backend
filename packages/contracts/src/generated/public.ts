@@ -14,8 +14,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Create an account and its first user
-         * @description Creates an account with the caller as `owner` and starts a session.
+         * Create an account and its first user, or join through an invite
+         * @description Without `inviteToken`, creates an account with the caller as `owner` and starts a session.
+         *     With `inviteToken`, creates the user, adds them to the inviting account with the invited
+         *     role and starts a session there; `accountName` is ignored and `email` must match the invite.
          */
         post: operations["signUp"];
         delete?: never;
@@ -33,7 +35,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Sign in with email and password */
+        /**
+         * Sign in with email and password
+         * @description The session opens in the account the user last used, or the first account they joined.
+         */
         post: operations["signIn"];
         delete?: never;
         options?: never;
@@ -58,6 +63,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/switch-account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move the current session to another account the user belongs to */
+        post: operations["switchAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/me": {
         parameters: {
             query?: never;
@@ -65,7 +87,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get the signed-in user and account */
+        /** Get the signed-in user, the current account and every account the user belongs to */
         get: operations["getMe"];
         put?: never;
         post?: never;
@@ -89,8 +111,175 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Update account settings */
+        /**
+         * Update account settings
+         * @description Needs the `owner` or `admin` role.
+         */
         patch: operations["updateAccount"];
+        trace?: never;
+    };
+    "/account/deletion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete the account and all of its data
+         * @description Owner only, from a console session. `accountName` must match the account name exactly.
+         *     API keys and device tokens stop working, pending invites are revoked and every session in
+         *     the account is signed out at once. Messages, inbox, devices, webhooks and usage are then
+         *     deleted in the background. Users who belong to no other account are removed. This cannot
+         *     be undone.
+         */
+        post: operations["deleteAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/team/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the people in the account */
+        get: operations["listTeamMembers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/team/members/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a member, or leave the account
+         * @description Needs `admin` or `owner` to remove someone else; anyone can remove themselves. Only an owner
+         *     can remove an owner, and the last owner cannot leave. The member's sessions in this account
+         *     end at once. A user who belongs to no other account is deleted.
+         */
+        delete: operations["removeTeamMember"];
+        options?: never;
+        head?: never;
+        /**
+         * Change a member's role
+         * @description Needs `admin` or `owner`. Only an owner can grant `owner` or change an owner's role.
+         *     The last owner cannot be demoted.
+         */
+        patch: operations["updateTeamMember"];
+        trace?: never;
+    };
+    "/team/invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List open invites
+         * @description Needs `admin` or `owner`. Accepted and revoked invites are not listed; expired ones are, until revoked.
+         */
+        get: operations["listInvites"];
+        put?: never;
+        /**
+         * Invite someone by email
+         * @description Needs `admin` or `owner`. No email is sent: share `inviteUrl` with the person yourself.
+         *     The link is returned only in this response, works once and expires after 7 days.
+         *     Inviting an address that already has an open invite revokes the old link.
+         */
+        post: operations["createInvite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/team/invites/{inviteId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                inviteId: components["parameters"]["InviteId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke an invite
+         * @description Needs `admin` or `owner`. The link stops working at once.
+         */
+        delete: operations["revokeInvite"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/invites/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The secret token from the invite link. */
+                token: components["parameters"]["InviteToken"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Look up an invite from its link
+         * @description Public, so the console can show who is inviting before the person signs in or signs up.
+         */
+        get: operations["getInvite"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/invites/{token}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The secret token from the invite link. */
+                token: components["parameters"]["InviteToken"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Join the inviting account as the signed-in user
+         * @description The signed-in user's email must match the invite. The session moves to the joined account.
+         */
+        post: operations["acceptInvite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api-keys": {
@@ -108,7 +297,7 @@ export interface paths {
         put?: never;
         /**
          * Create an API key
-         * @description The response is the only time the full `secret` is returned.
+         * @description The response is the only time the full `secret` is returned. Needs the `owner` or `admin` role.
          */
         post: operations["createApiKey"];
         delete?: never;
@@ -131,7 +320,7 @@ export interface paths {
         post?: never;
         /**
          * Revoke an API key
-         * @description Revocation is immediate and cannot be undone.
+         * @description Revocation is immediate and cannot be undone. Needs the `owner` or `admin` role.
          */
         delete: operations["revokeApiKey"];
         options?: never;
@@ -167,7 +356,7 @@ export interface paths {
         put?: never;
         /**
          * Create a one-time pairing code
-         * @description The phone enters the code, or scans `pairingUri` as a QR code, to pair with this account.
+         * @description The phone enters the code, or scans `pairingUri` as a QR code, to pair with this account. Needs the `owner` or `admin` role.
          */
         post: operations["createPairingCode"];
         delete?: never;
@@ -191,14 +380,14 @@ export interface paths {
         post?: never;
         /**
          * Remove a device
-         * @description Revokes the device token. Messages leased to it go back to the queue.
+         * @description Revokes the device token. Messages leased to it go back to the queue. Needs the `owner` or `admin` role.
          */
         delete: operations["removeDevice"];
         options?: never;
         head?: never;
         /**
          * Rename a device, pause it or change its limits
-         * @description Limit changes are pushed to the phone as remote settings.
+         * @description Limit changes are pushed to the phone as remote settings. Needs the `owner` or `admin` role.
          */
         patch: operations["updateDevice"];
         trace?: never;
@@ -338,7 +527,7 @@ export interface paths {
         put?: never;
         /**
          * Create a webhook endpoint
-         * @description The response is the only time the signing `secret` is returned until it is rotated.
+         * @description The response is the only time the signing `secret` is returned until it is rotated. Needs the `owner` or `admin` role.
          */
         post: operations["createWebhook"];
         delete?: never;
@@ -360,11 +549,17 @@ export interface paths {
         get: operations["getWebhook"];
         put?: never;
         post?: never;
-        /** Delete a webhook endpoint */
+        /**
+         * Delete a webhook endpoint
+         * @description Needs the `owner` or `admin` role.
+         */
         delete: operations["deleteWebhook"];
         options?: never;
         head?: never;
-        /** Update a webhook endpoint */
+        /**
+         * Update a webhook endpoint
+         * @description Needs the `owner` or `admin` role.
+         */
         patch: operations["updateWebhook"];
         trace?: never;
     };
@@ -381,7 +576,7 @@ export interface paths {
         put?: never;
         /**
          * Replace the signing secret
-         * @description The old secret stops working immediately.
+         * @description The old secret stops working immediately. Needs the `owner` or `admin` role.
          */
         post: operations["rotateWebhookSecret"];
         delete?: never;
@@ -401,7 +596,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Send a `webhook.test` event to this endpoint */
+        /**
+         * Send a `webhook.test` event to this endpoint
+         * @description Needs the `owner` or `admin` role.
+         */
         post: operations["sendWebhookTest"];
         delete?: never;
         options?: never;
@@ -442,7 +640,7 @@ export interface paths {
         put?: never;
         /**
          * Send a delivery again
-         * @description Resets the attempt counter and sends the original event with a fresh signature.
+         * @description Resets the attempt counter and sends the original event with a fresh signature. Needs the `owner` or `admin` role.
          */
         post: operations["redeliverWebhook"];
         delete?: never;
@@ -572,6 +770,40 @@ export interface webhooks {
         patch?: never;
         trace?: never;
     };
+    "message.cancelled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** The message was cancelled through the API or console */
+        post: operations["onMessageCancelled"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "message.expired": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** The message passed `validUntil` before a phone took it */
+        post: operations["onMessageExpired"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "inbox.received": {
         parameters: {
             query?: never;
@@ -681,15 +913,27 @@ export interface components {
         PhoneNumber: string;
         /** Format: date-time */
         Timestamp: string;
+        /**
+         * @description `owner` can do everything, including deleting the account and managing owners.
+         *     `admin` manages the account, API keys, webhooks, devices and the team.
+         *     `member` sends messages and reads messages, inbox, devices, webhooks, usage and the member list.
+         * @enum {string}
+         */
+        Role: "owner" | "admin" | "member";
         User: {
             /** @example usr_V1StGXR8Z5jdHi6BmyT */
             id: string;
             /** Format: email */
             email: string;
             name: string;
-            /** @enum {string} */
-            role: "owner" | "member";
+            /** @description Role in the session's current account. */
+            role: components["schemas"]["Role"];
             createdAt: components["schemas"]["Timestamp"];
+        };
+        Membership: {
+            accountId: string;
+            accountName: string;
+            role: components["schemas"]["Role"];
         };
         /**
          * @description How messages without `deviceId` are spread across online devices.
@@ -705,14 +949,82 @@ export interface components {
         Session: {
             user: components["schemas"]["User"];
             account: components["schemas"]["Account"];
+            /** @description Every account the user belongs to, oldest membership first. */
+            memberships: components["schemas"]["Membership"][];
+        };
+        SwitchAccountRequest: {
+            accountId: string;
+        };
+        DeleteAccountRequest: {
+            /** @description Must equal the current account name exactly. */
+            accountName: string;
+        };
+        TeamMember: {
+            userId: string;
+            /** Format: email */
+            email: string;
+            name: string;
+            role: components["schemas"]["Role"];
+            joinedAt: components["schemas"]["Timestamp"];
+        };
+        TeamMemberList: {
+            data: components["schemas"]["TeamMember"][];
+        };
+        UpdateTeamMemberRequest: {
+            role: components["schemas"]["Role"];
+        };
+        /**
+         * @description Roles an invite can grant. Make someone `owner` after they join.
+         * @enum {string}
+         */
+        InviteRole: "admin" | "member";
+        /** @enum {string} */
+        InviteStatus: "pending" | "expired";
+        Invite: {
+            /** @example inv_V1StGXR8Z5jdHi6BmyT */
+            id: string;
+            /** Format: email */
+            email: string;
+            role: components["schemas"]["InviteRole"];
+            status: components["schemas"]["InviteStatus"];
+            /** @description Name of the person who sent the invite, `null` if they have left. */
+            invitedBy: string | null;
+            expiresAt: components["schemas"]["Timestamp"];
+            createdAt: components["schemas"]["Timestamp"];
+        };
+        InviteWithLink: components["schemas"]["Invite"] & {
+            /**
+             * Format: uri
+             * @description Console link that accepts the invite. Shown only once.
+             * @example https://console.homingsms.com/invite/hi_V1StGXR8Z5jdHi6BmyTq2nB7xKp0LwEa
+             */
+            inviteUrl: string;
+        };
+        InviteList: {
+            data: components["schemas"]["Invite"][];
+        };
+        CreateInviteRequest: {
+            /** Format: email */
+            email: string;
+            role: components["schemas"]["InviteRole"];
+        };
+        InvitePreview: {
+            accountName: string;
+            /** Format: email */
+            email: string;
+            role: components["schemas"]["InviteRole"];
+            invitedBy: string | null;
+            expiresAt: components["schemas"]["Timestamp"];
         };
         SignUpRequest: {
             /** Format: email */
             email: string;
             password: string;
             name: string;
-            /** @description Defaults to the user's name. */
+            /** @description Defaults to the user's name. Ignored with `inviteToken`. */
             accountName?: string;
+            /** @description Token from an invite link. Joins the inviting account instead of creating one. */
+            inviteToken?: string;
         };
         SignInRequest: {
             /** Format: email */
@@ -763,7 +1075,32 @@ export interface components {
          * @description `online` while heartbeats arrive; `offline` after missing them.
          * @enum {string}
          */
-        DeviceStatus: "online" | "offline";
+        DevicePresence: "online" | "offline";
+        /**
+         * @description `offline` after missing heartbeats, exactly as before. A device that is heartbeating is
+         *     `online` when nothing limits it and `degraded` when `statusReasons` lists at least one
+         *     problem. A `degraded` device is still connected, may still send, and counts as online for
+         *     presence, usage and the `device.online` and `device.offline` webhooks.
+         * @enum {string}
+         */
+        DeviceStatus: "online" | "degraded" | "offline";
+        /**
+         * @description - `paused`: paused in the console, so it is never picked for sending.
+         *     - `low_battery`: battery below 15% and not charging.
+         *     - `no_network`: the phone reports no network connection.
+         *     - `all_sims_disabled`: every reported SIM is disabled.
+         *     - `sim_no_signal`: an enabled SIM reports no signal (`simSlot` is set).
+         *     - `device_cap_reached`: the device reached its daily limit.
+         *     - `sim_cap_reached`: an enabled SIM reached its daily limit (`simSlot` is set).
+         *     - `stale_heartbeat`: no heartbeat for more than two intervals; it goes `offline` soon.
+         * @enum {string}
+         */
+        DeviceStatusReasonCode: "paused" | "low_battery" | "no_network" | "all_sims_disabled" | "sim_no_signal" | "device_cap_reached" | "sim_cap_reached" | "stale_heartbeat";
+        DeviceStatusReason: {
+            code: components["schemas"]["DeviceStatusReasonCode"];
+            /** @description The SIM the reason is about, `null` for device-wide reasons. */
+            simSlot: number | null;
+        };
         /** @enum {string} */
         NetworkType: "wifi" | "cellular" | "ethernet" | "none" | "unknown";
         Sim: {
@@ -788,6 +1125,8 @@ export interface components {
             id: string;
             name: string;
             status: components["schemas"]["DeviceStatus"];
+            /** @description Why the device is `degraded`. Offline devices list only settings and cap reasons. Empty when `online`. */
+            statusReasons: components["schemas"]["DeviceStatusReason"][];
             /** @description Paused devices keep receiving but are never picked for sending. */
             paused: boolean;
             model: string | null;
@@ -997,9 +1336,9 @@ export interface components {
             nextCursor: string | null;
         };
         /** @enum {string} */
-        WebhookEventType: "message.sent" | "message.delivered" | "message.failed" | "inbox.received" | "device.online" | "device.offline" | "opt_out.received" | "webhook.test";
+        WebhookEventType: "message.sent" | "message.delivered" | "message.failed" | "message.cancelled" | "message.expired" | "inbox.received" | "device.online" | "device.offline" | "opt_out.received" | "webhook.test";
         /** @enum {string} */
-        SubscribableEventType: "message.sent" | "message.delivered" | "message.failed" | "inbox.received" | "device.online" | "device.offline" | "opt_out.received";
+        SubscribableEventType: "message.sent" | "message.delivered" | "message.failed" | "message.cancelled" | "message.expired" | "inbox.received" | "device.online" | "device.offline" | "opt_out.received";
         WebhookEndpoint: {
             /** @example whk_V1StGXR8Z5jdHi6BmyT */
             id: string;
@@ -1126,7 +1465,7 @@ export interface components {
         };
         MessageWebhookEvent: components["schemas"]["WebhookEventEnvelope"] & {
             /** @enum {string} */
-            type: "message.sent" | "message.delivered" | "message.failed";
+            type: "message.sent" | "message.delivered" | "message.failed" | "message.cancelled" | "message.expired";
             data: {
                 message: components["schemas"]["Message"];
             };
@@ -1145,7 +1484,7 @@ export interface components {
                 device: {
                     id: string;
                     name: string;
-                    status: components["schemas"]["DeviceStatus"];
+                    status: components["schemas"]["DevicePresence"];
                     /** Format: date-time */
                     lastSeenAt: string | null;
                 };
@@ -1191,7 +1530,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description The credentials lack the required scope. */
+        /** @description The credentials lack the required scope or role. */
         Forbidden: {
             headers: {
                 [name: string]: unknown;
@@ -1243,6 +1582,10 @@ export interface components {
         DeviceId: string;
         MessageId: string;
         InboxMessageId: string;
+        UserId: string;
+        InviteId: string;
+        /** @description The secret token from the invite link. */
+        InviteToken: string;
         WebhookId: string;
         /** @description Opaque cursor from `nextCursor` of the previous page. */
         Cursor: string;
@@ -1297,6 +1640,15 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            /** @description The invite was sent to a different email address. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             409: components["responses"]["Conflict"];
             429: components["responses"]["TooManyRequests"];
         };
@@ -1346,6 +1698,34 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    switchAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SwitchAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description The session now acts in the chosen account. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     getMe: {
@@ -1416,6 +1796,242 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    deleteAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Deletion started. The session cookie is cleared. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listTeamMembers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Members, oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamMemberList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    removeTeamMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    updateTeamMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateTeamMemberRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated member. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamMember"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    listInvites: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invites, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateInviteRequest"];
+            };
+        };
+        responses: {
+            /** @description Invite created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteWithLink"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    revokeInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                inviteId: components["parameters"]["InviteId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The secret token from the invite link. */
+                token: components["parameters"]["InviteToken"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invite. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitePreview"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    acceptInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The secret token from the invite link. */
+                token: components["parameters"]["InviteToken"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Joined. The session now acts in the joined account. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description The invite was sent to a different email address. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     listApiKeys: {
@@ -1624,6 +2240,8 @@ export interface operations {
                 state?: components["schemas"]["MessageState"];
                 type?: components["schemas"]["MessageType"];
                 deviceId?: string;
+                /** @description Only messages sent, or being sent, from this SIM slot. Usually combined with `deviceId`. */
+                simSlot?: number;
                 /** @description Exact recipient phone number. */
                 to?: components["schemas"]["PhoneNumber"];
                 /** @description Inclusive lower bound on `createdAt`. */
@@ -2228,6 +2846,60 @@ export interface operations {
         };
     };
     onMessageFailed: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description `t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">`. See WEBHOOKS.md. */
+                "Homing-Signature": components["parameters"]["SignatureHeader"];
+                "Homing-Event-Id": components["parameters"]["EventIdHeader"];
+                "Homing-Event-Type": components["parameters"]["EventTypeHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MessageWebhookEvent"];
+            };
+        };
+        responses: {
+            /** @description Any 2xx marks the delivery as succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onMessageCancelled: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description `t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">`. See WEBHOOKS.md. */
+                "Homing-Signature": components["parameters"]["SignatureHeader"];
+                "Homing-Event-Id": components["parameters"]["EventIdHeader"];
+                "Homing-Event-Type": components["parameters"]["EventTypeHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MessageWebhookEvent"];
+            };
+        };
+        responses: {
+            /** @description Any 2xx marks the delivery as succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onMessageExpired: {
         parameters: {
             query?: never;
             header: {

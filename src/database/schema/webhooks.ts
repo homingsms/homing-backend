@@ -61,5 +61,22 @@ export const webhookDeliveries = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (table) => [index('webhook_deliveries_endpoint_idx').on(table.endpointId, table.createdAt, table.id)],
+  (table) => [
+    index('webhook_deliveries_endpoint_idx').on(table.endpointId, table.createdAt, table.id),
+    index('webhook_deliveries_status_idx').on(table.status, table.createdAt),
+  ],
+);
+
+export const webhookOutbox = pgTable(
+  'webhook_outbox',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(),
+    data: jsonb('data').$type<Record<string, unknown>>().notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [index('webhook_outbox_created_idx').on(table.createdAt, table.id)],
 );

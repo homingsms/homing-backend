@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm';
-import { accounts, sessions, users } from './accounts';
+import { accountMembers, accounts, sessions, teamInvites, users } from './accounts';
 import { apiKeys } from './api-keys';
 import { deviceSims, devices, pairingCodes } from './devices';
 import { inboxAttachments, inboxMessages } from './inbox';
@@ -7,7 +7,8 @@ import { messageAttachments, messageEvents, messages } from './messages';
 import { webhookDeliveries, webhookEndpoints, webhookEvents } from './webhooks';
 
 export const accountsRelations = relations(accounts, ({ many }) => ({
-  users: many(users),
+  members: many(accountMembers),
+  invites: many(teamInvites),
   apiKeys: many(apiKeys),
   devices: many(devices),
   pairingCodes: many(pairingCodes),
@@ -16,13 +17,23 @@ export const accountsRelations = relations(accounts, ({ many }) => ({
   webhookEndpoints: many(webhookEndpoints),
 }));
 
-export const usersRelations = relations(users, ({ one, many }) => ({
-  account: one(accounts, { fields: [users.accountId], references: [accounts.id] }),
+export const usersRelations = relations(users, ({ many }) => ({
+  memberships: many(accountMembers),
   sessions: many(sessions),
+}));
+
+export const accountMembersRelations = relations(accountMembers, ({ one }) => ({
+  account: one(accounts, { fields: [accountMembers.accountId], references: [accounts.id] }),
+  user: one(users, { fields: [accountMembers.userId], references: [users.id] }),
 }));
 
 export const sessionsRelations = relations(sessions, ({ one }) => ({
   user: one(users, { fields: [sessions.userId], references: [users.id] }),
+  account: one(accounts, { fields: [sessions.accountId], references: [accounts.id] }),
+}));
+
+export const teamInvitesRelations = relations(teamInvites, ({ one }) => ({
+  account: one(accounts, { fields: [teamInvites.accountId], references: [accounts.id] }),
 }));
 
 export const apiKeysRelations = relations(apiKeys, ({ one }) => ({

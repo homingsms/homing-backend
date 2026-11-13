@@ -7,8 +7,10 @@ info:
     The public API used by customer applications and the Homing Cloud web console.
 
     Authentication:
-    - Web console: `POST /auth/sign-in` sets an httpOnly `homing_session` cookie. A session has every scope of its user.
+    - Web console: `POST /auth/sign-in` sets an httpOnly `homing_session` cookie. A session acts in one account at a time and has every scope, limited by the user's role in that account.
     - Applications: `Authorization: Bearer hk_live_...` with an API key. Each operation lists the scope it needs; `admin` grants every scope.
+
+    Roles: `owner`, `admin` and `member`. Members can send messages and read everything except invites. Managing the account, API keys, webhooks, devices and the team needs `admin` or `owner`. Deleting the account and granting or removing `owner` needs `owner`. Roles apply to sessions only; API keys use scopes.
 
     Lists use cursor pagination: pass `nextCursor` from a page as `cursor` to get the next page. `nextCursor` is `null` on the last page.
 
@@ -26,7 +28,9 @@ tags:
   - name: Auth
     description: Console sign up, sign in and session.
   - name: Account
-    description: Account settings.
+    description: Account settings and deletion.
+  - name: Team
+    description: Members, roles and invites.
   - name: API keys
     description: Scoped API keys for applications.
   - name: Devices
@@ -49,8 +53,11 @@ paths:
     post:
       tags: [Auth]
       operationId: signUp
-      summary: Create an account and its first user
-      description: Creates an account with the caller as `owner` and starts a session.
+      summary: Create an account and its first user, or join through an invite
+      description: |
+        Without `inviteToken`, creates an account with the caller as `owner` and starts a session.
+        With `inviteToken`, creates the user, adds them to the inviting account with the invited
+        role and starts a session there; `accountName` is ignored and `email` must match the invite.
       security: []
       requestBody:
         required: true
@@ -70,6 +77,12 @@ paths:
                 $ref: '#/components/schemas/Session'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '403':
+          description: The invite was sent to a different email address.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '409':
           $ref: '#/components/responses/Conflict'
         '429':
@@ -79,6 +92,7 @@ paths:
       tags: [Auth]
       operationId: signIn
       summary: Sign in with email and password
+      description: The session opens in the account the user last used, or the first account they joined.
       security: []
       requestBody:
         required: true
@@ -114,11 +128,39 @@ paths:
           description: Session ended and cookie cleared.
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /auth/switch-account:
+    post:
+      tags: [Auth]
+      operationId: switchAccount
+      summary: Move the current session to another account the user belongs to
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SwitchAccountRequest'
+      responses:
+        '200':
+          description: The session now acts in the chosen account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /auth/me:
     get:
       tags: [Auth]
       operationId: getMe
-      summary: Get the signed-in user and account
+      summary: Get the signed-in user, the current account and every account the user belongs to
       security:
         - sessionCookie: []
       responses:
@@ -150,6 +192,7 @@ paths:
       tags: [Account]
       operationId: updateAccount
       summary: Update account settings
+      description: Needs the `owner` or `admin` role.
       requestBody:
         required: true
         content:
@@ -169,6 +212,228 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /account/deletion:
+    post:
+      tags: [Account]
+      operationId: deleteAccount
+      summary: Delete the account and all of its data
+      description: |
+        Owner only, from a console session. `accountName` must match the account name exactly.
+        API keys and device tokens stop working, pending invites are revoked and every session in
+        the account is signed out at once. Messages, inbox, devices, webhooks and usage are then
+        deleted in the background. Users who belong to no other account are removed. This cannot
+        be undone.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteAccountRequest'
+      responses:
+        '202':
+          description: Deletion started. The session cookie is cleared.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /team/members:
+    get:
+      tags: [Team]
+      operationId: listTeamMembers
+      summary: List the people in the account
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Members, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamMemberList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /team/members/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    patch:
+      tags: [Team]
+      operationId: updateTeamMember
+      summary: Change a member's role
+      description: |
+        Needs `admin` or `owner`. Only an owner can grant `owner` or change an owner's role.
+        The last owner cannot be demoted.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTeamMemberRequest'
+      responses:
+        '200':
+          description: Updated member.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamMember'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [Team]
+      operationId: removeTeamMember
+      summary: Remove a member, or leave the account
+      description: |
+        Needs `admin` or `owner` to remove someone else; anyone can remove themselves. Only an owner
+        can remove an owner, and the last owner cannot leave. The member's sessions in this account
+        end at once. A user who belongs to no other account is deleted.
+      security:
+        - sessionCookie: []
+      responses:
+        '204':
+          description: Removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /team/invites:
+    get:
+      tags: [Team]
+      operationId: listInvites
+      summary: List open invites
+      description: Needs `admin` or `owner`. Accepted and revoked invites are not listed; expired ones are, until revoked.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Invites, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Team]
+      operationId: createInvite
+      summary: Invite someone by email
+      description: |
+        Needs `admin` or `owner`. No email is sent: share `inviteUrl` with the person yourself.
+        The link is returned only in this response, works once and expires after 7 days.
+        Inviting an address that already has an open invite revokes the old link.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInviteRequest'
+      responses:
+        '201':
+          description: Invite created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteWithLink'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /team/invites/{inviteId}:
+    parameters:
+      - $ref: '#/components/parameters/InviteId'
+    delete:
+      tags: [Team]
+      operationId: revokeInvite
+      summary: Revoke an invite
+      description: Needs `admin` or `owner`. The link stops working at once.
+      security:
+        - sessionCookie: []
+      responses:
+        '204':
+          description: Revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /invites/{token}:
+    parameters:
+      - $ref: '#/components/parameters/InviteToken'
+    get:
+      tags: [Team]
+      operationId: getInvite
+      summary: Look up an invite from its link
+      description: Public, so the console can show who is inviting before the person signs in or signs up.
+      security: []
+      responses:
+        '200':
+          description: Invite.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvitePreview'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /invites/{token}/accept:
+    parameters:
+      - $ref: '#/components/parameters/InviteToken'
+    post:
+      tags: [Team]
+      operationId: acceptInvite
+      summary: Join the inviting account as the signed-in user
+      description: The signed-in user's email must match the invite. The session moves to the joined account.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Joined. The session now acts in the joined account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: The invite was sent to a different email address.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /api-keys:
     get:
       tags: [API keys]
@@ -190,7 +455,7 @@ paths:
       tags: [API keys]
       operationId: createApiKey
       summary: Create an API key
-      description: The response is the only time the full `secret` is returned.
+      description: The response is the only time the full `secret` is returned. Needs the `owner` or `admin` role.
       requestBody:
         required: true
         content:
@@ -217,7 +482,7 @@ paths:
       tags: [API keys]
       operationId: revokeApiKey
       summary: Revoke an API key
-      description: Revocation is immediate and cannot be undone.
+      description: Revocation is immediate and cannot be undone. Needs the `owner` or `admin` role.
       responses:
         '204':
           description: Revoked.
@@ -251,7 +516,7 @@ paths:
       tags: [Devices]
       operationId: createPairingCode
       summary: Create a one-time pairing code
-      description: The phone enters the code, or scans `pairingUri` as a QR code, to pair with this account.
+      description: The phone enters the code, or scans `pairingUri` as a QR code, to pair with this account. Needs the `owner` or `admin` role.
       security:
         - sessionCookie: []
         - apiKey: [devices:manage]
@@ -301,7 +566,7 @@ paths:
       tags: [Devices]
       operationId: updateDevice
       summary: Rename a device, pause it or change its limits
-      description: Limit changes are pushed to the phone as remote settings.
+      description: Limit changes are pushed to the phone as remote settings. Needs the `owner` or `admin` role.
       security:
         - sessionCookie: []
         - apiKey: [devices:manage]
@@ -330,7 +595,7 @@ paths:
       tags: [Devices]
       operationId: removeDevice
       summary: Remove a device
-      description: Revokes the device token. Messages leased to it go back to the queue.
+      description: Revokes the device token. Messages leased to it go back to the queue. Needs the `owner` or `admin` role.
       security:
         - sessionCookie: []
         - apiKey: [devices:manage]
@@ -415,6 +680,13 @@ paths:
           in: query
           schema:
             type: string
+        - name: simSlot
+          in: query
+          description: Only messages sent, or being sent, from this SIM slot. Usually combined with `deviceId`.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 7
         - name: to
           in: query
           description: Exact recipient phone number.
@@ -609,7 +881,7 @@ paths:
       tags: [Webhooks]
       operationId: createWebhook
       summary: Create a webhook endpoint
-      description: The response is the only time the signing `secret` is returned until it is rotated.
+      description: The response is the only time the signing `secret` is returned until it is rotated. Needs the `owner` or `admin` role.
       security:
         - sessionCookie: []
         - apiKey: [webhooks:manage]
@@ -659,6 +931,7 @@ paths:
       tags: [Webhooks]
       operationId: updateWebhook
       summary: Update a webhook endpoint
+      description: Needs the `owner` or `admin` role.
       security:
         - sessionCookie: []
         - apiKey: [webhooks:manage]
@@ -687,6 +960,7 @@ paths:
       tags: [Webhooks]
       operationId: deleteWebhook
       summary: Delete a webhook endpoint
+      description: Needs the `owner` or `admin` role.
       security:
         - sessionCookie: []
         - apiKey: [webhooks:manage]
@@ -706,7 +980,7 @@ paths:
       tags: [Webhooks]
       operationId: rotateWebhookSecret
       summary: Replace the signing secret
-      description: The old secret stops working immediately.
+      description: The old secret stops working immediately. Needs the `owner` or `admin` role.
       security:
         - sessionCookie: []
         - apiKey: [webhooks:manage]
@@ -730,6 +1004,7 @@ paths:
       tags: [Webhooks]
       operationId: sendWebhookTest
       summary: Send a `webhook.test` event to this endpoint
+      description: Needs the `owner` or `admin` role.
       security:
         - sessionCookie: []
         - apiKey: [webhooks:manage]
@@ -790,7 +1065,7 @@ paths:
       tags: [Webhooks]
       operationId: redeliverWebhook
       summary: Send a delivery again
-      description: Resets the attempt counter and sends the original event with a fresh signature.
+      description: Resets the attempt counter and sends the original event with a fresh signature. Needs the `owner` or `admin` role.
       security:
         - sessionCookie: []
         - apiKey: [webhooks:manage]
@@ -957,6 +1232,44 @@ webhooks:
       responses:
         '200':
           description: Any 2xx marks the delivery as succeeded.
+  message.cancelled:
+    post:
+      operationId: onMessageCancelled
+      summary: The message was cancelled through the API or console
+      tags: [Webhooks]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SignatureHeader'
+        - $ref: '#/components/parameters/EventIdHeader'
+        - $ref: '#/components/parameters/EventTypeHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageWebhookEvent'
+      responses:
+        '200':
+          description: Any 2xx marks the delivery as succeeded.
+  message.expired:
+    post:
+      operationId: onMessageExpired
+      summary: The message passed `validUntil` before a phone took it
+      tags: [Webhooks]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SignatureHeader'
+        - $ref: '#/components/parameters/EventIdHeader'
+        - $ref: '#/components/parameters/EventTypeHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageWebhookEvent'
+      responses:
+        '200':
+          description: Any 2xx marks the delivery as succeeded.
   inbox.received:
     post:
       operationId: onInboxReceived
@@ -1105,6 +1418,27 @@ components:
       required: true
       schema:
         type: string
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+    InviteId:
+      name: inviteId
+      in: path
+      required: true
+      schema:
+        type: string
+    InviteToken:
+      name: token
+      in: path
+      required: true
+      description: The secret token from the invite link.
+      schema:
+        type: string
+        minLength: 10
+        maxLength: 200
     WebhookId:
       name: webhookId
       in: path
@@ -1189,7 +1523,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: The credentials lack the required scope.
+      description: The credentials lack the required scope or role.
       content:
         application/json:
           schema:
@@ -1256,6 +1590,13 @@ components:
     Timestamp:
       type: string
       format: date-time
+    Role:
+      type: string
+      description: |
+        `owner` can do everything, including deleting the account and managing owners.
+        `admin` manages the account, API keys, webhooks, devices and the team.
+        `member` sends messages and reads messages, inbox, devices, webhooks, usage and the member list.
+      enum: [owner, admin, member]
     User:
       type: object
       required: [id, email, name, role, createdAt]
@@ -1269,10 +1610,21 @@ components:
         name:
           type: string
         role:
-          type: string
-          enum: [owner, member]
+          description: Role in the session's current account.
+          allOf:
+            - $ref: '#/components/schemas/Role'
         createdAt:
           $ref: '#/components/schemas/Timestamp'
+    Membership:
+      type: object
+      required: [accountId, accountName, role]
+      properties:
+        accountId:
+          type: string
+        accountName:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
     RoutingStrategy:
       type: string
       description: How messages without `deviceId` are spread across online devices.
@@ -1291,12 +1643,139 @@ components:
           $ref: '#/components/schemas/Timestamp'
     Session:
       type: object
-      required: [user, account]
+      required: [user, account, memberships]
       properties:
         user:
           $ref: '#/components/schemas/User'
         account:
           $ref: '#/components/schemas/Account'
+        memberships:
+          type: array
+          description: Every account the user belongs to, oldest membership first.
+          items:
+            $ref: '#/components/schemas/Membership'
+    SwitchAccountRequest:
+      type: object
+      additionalProperties: false
+      required: [accountId]
+      properties:
+        accountId:
+          type: string
+          minLength: 1
+          maxLength: 64
+    DeleteAccountRequest:
+      type: object
+      additionalProperties: false
+      required: [accountName]
+      properties:
+        accountName:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Must equal the current account name exactly.
+    TeamMember:
+      type: object
+      required: [userId, email, name, role, joinedAt]
+      properties:
+        userId:
+          type: string
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        joinedAt:
+          $ref: '#/components/schemas/Timestamp'
+    TeamMemberList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TeamMember'
+    UpdateTeamMemberRequest:
+      type: object
+      additionalProperties: false
+      required: [role]
+      properties:
+        role:
+          $ref: '#/components/schemas/Role'
+    InviteRole:
+      type: string
+      description: Roles an invite can grant. Make someone `owner` after they join.
+      enum: [admin, member]
+    InviteStatus:
+      type: string
+      enum: [pending, expired]
+    Invite:
+      type: object
+      required: [id, email, role, status, invitedBy, expiresAt, createdAt]
+      properties:
+        id:
+          type: string
+          examples: [inv_V1StGXR8Z5jdHi6BmyT]
+        email:
+          type: string
+          format: email
+        role:
+          $ref: '#/components/schemas/InviteRole'
+        status:
+          $ref: '#/components/schemas/InviteStatus'
+        invitedBy:
+          type: [string, 'null']
+          description: Name of the person who sent the invite, `null` if they have left.
+        expiresAt:
+          $ref: '#/components/schemas/Timestamp'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+    InviteWithLink:
+      allOf:
+        - $ref: '#/components/schemas/Invite'
+        - type: object
+          required: [inviteUrl]
+          properties:
+            inviteUrl:
+              type: string
+              format: uri
+              description: Console link that accepts the invite. Shown only once.
+              examples: [https://console.homingsms.com/invite/hi_V1StGXR8Z5jdHi6BmyTq2nB7xKp0LwEa]
+    InviteList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Invite'
+    CreateInviteRequest:
+      type: object
+      additionalProperties: false
+      required: [email, role]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        role:
+          $ref: '#/components/schemas/InviteRole'
+    InvitePreview:
+      type: object
+      required: [accountName, email, role, invitedBy, expiresAt]
+      properties:
+        accountName:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          $ref: '#/components/schemas/InviteRole'
+        invitedBy:
+          type: [string, 'null']
+        expiresAt:
+          $ref: '#/components/schemas/Timestamp'
     SignUpRequest:
       type: object
       additionalProperties: false
@@ -1318,7 +1797,12 @@ components:
           type: string
           minLength: 1
           maxLength: 100
-          description: Defaults to the user's name.
+          description: Defaults to the user's name. Ignored with `inviteToken`.
+        inviteToken:
+          type: string
+          minLength: 10
+          maxLength: 200
+          description: Token from an invite link. Joins the inviting account instead of creating one.
     SignInRequest:
       type: object
       additionalProperties: false
@@ -1406,10 +1890,41 @@ components:
           type: string
           format: date-time
           description: Optional expiry in the future.
-    DeviceStatus:
+    DevicePresence:
       type: string
       description: '`online` while heartbeats arrive; `offline` after missing them.'
       enum: [online, offline]
+    DeviceStatus:
+      type: string
+      description: |
+        `offline` after missing heartbeats, exactly as before. A device that is heartbeating is
+        `online` when nothing limits it and `degraded` when `statusReasons` lists at least one
+        problem. A `degraded` device is still connected, may still send, and counts as online for
+        presence, usage and the `device.online` and `device.offline` webhooks.
+      enum: [online, degraded, offline]
+    DeviceStatusReasonCode:
+      type: string
+      description: |
+        - `paused`: paused in the console, so it is never picked for sending.
+        - `low_battery`: battery below 15% and not charging.
+        - `no_network`: the phone reports no network connection.
+        - `all_sims_disabled`: every reported SIM is disabled.
+        - `sim_no_signal`: an enabled SIM reports no signal (`simSlot` is set).
+        - `device_cap_reached`: the device reached its daily limit.
+        - `sim_cap_reached`: an enabled SIM reached its daily limit (`simSlot` is set).
+        - `stale_heartbeat`: no heartbeat for more than two intervals; it goes `offline` soon.
+      enum: [paused, low_battery, no_network, all_sims_disabled, sim_no_signal, device_cap_reached, sim_cap_reached, stale_heartbeat]
+    DeviceStatusReason:
+      type: object
+      required: [code, simSlot]
+      properties:
+        code:
+          $ref: '#/components/schemas/DeviceStatusReasonCode'
+        simSlot:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 7
+          description: The SIM the reason is about, `null` for device-wide reasons.
     NetworkType:
       type: string
       enum: [wifi, cellular, ethernet, none, unknown]
@@ -1455,7 +1970,7 @@ components:
           $ref: '#/components/schemas/Timestamp'
     Device:
       type: object
-      required: [id, name, status, paused, model, manufacturer, osVersion, appVersion, dailyLimit, sentToday, lastSeenAt, health, sims, createdAt]
+      required: [id, name, status, statusReasons, paused, model, manufacturer, osVersion, appVersion, dailyLimit, sentToday, lastSeenAt, health, sims, createdAt]
       properties:
         id:
           type: string
@@ -1464,6 +1979,11 @@ components:
           type: string
         status:
           $ref: '#/components/schemas/DeviceStatus'
+        statusReasons:
+          type: array
+          description: Why the device is `degraded`. Offline devices list only settings and cap reasons. Empty when `online`.
+          items:
+            $ref: '#/components/schemas/DeviceStatusReason'
         paused:
           type: boolean
           description: Paused devices keep receiving but are never picked for sending.
@@ -1877,10 +2397,10 @@ components:
           type: [string, 'null']
     WebhookEventType:
       type: string
-      enum: [message.sent, message.delivered, message.failed, inbox.received, device.online, device.offline, opt_out.received, webhook.test]
+      enum: [message.sent, message.delivered, message.failed, message.cancelled, message.expired, inbox.received, device.online, device.offline, opt_out.received, webhook.test]
     SubscribableEventType:
       type: string
-      enum: [message.sent, message.delivered, message.failed, inbox.received, device.online, device.offline, opt_out.received]
+      enum: [message.sent, message.delivered, message.failed, message.cancelled, message.expired, inbox.received, device.online, device.offline, opt_out.received]
     WebhookEndpoint:
       type: object
       required: [id, url, description, events, enabled, createdAt, updatedAt]
@@ -2133,7 +2653,7 @@ components:
           properties:
             type:
               type: string
-              enum: [message.sent, message.delivered, message.failed]
+              enum: [message.sent, message.delivered, message.failed, message.cancelled, message.expired]
             data:
               type: object
               required: [message]
@@ -2177,7 +2697,7 @@ components:
                     name:
                       type: string
                     status:
-                      $ref: '#/components/schemas/DeviceStatus'
+                      $ref: '#/components/schemas/DevicePresence'
                     lastSeenAt:
                       type: [string, 'null']
                       format: date-time

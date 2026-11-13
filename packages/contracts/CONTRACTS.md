@@ -18,8 +18,9 @@ The package exports TypeScript source (`exports["."] = ./src/index.ts`). Next.js
 
 | Area | Operations |
 | --- | --- |
-| Auth | `POST /auth/sign-up`, `POST /auth/sign-in`, `POST /auth/sign-out`, `GET /auth/me` |
-| Account | `GET /account`, `PATCH /account` (name, routing strategy) |
+| Auth | `POST /auth/sign-up` (optionally with `inviteToken`), `POST /auth/sign-in`, `POST /auth/sign-out`, `POST /auth/switch-account`, `GET /auth/me` |
+| Account | `GET /account`, `PATCH /account` (name, routing strategy), `POST /account/deletion` |
+| Team | `GET /team/members`, `PATCH/DELETE /team/members/{userId}`, `GET/POST /team/invites`, `DELETE /team/invites/{inviteId}`, `GET /invites/{token}`, `POST /invites/{token}/accept` |
 | API keys | `GET /api-keys`, `POST /api-keys` (secret returned once), `DELETE /api-keys/{id}` (revoke) |
 | Devices | `GET /devices`, `GET/PATCH/DELETE /devices/{id}`, `POST /devices/pairing-codes` |
 | Messages | `POST /messages`, `GET /messages`, `GET /messages/{id}`, `POST /messages/{id}/cancel` |
@@ -28,7 +29,22 @@ The package exports TypeScript source (`exports["."] = ./src/index.ts`). Next.js
 | Usage | `GET /usage/summary`, `GET /usage/daily`, `GET /usage/devices` |
 | Health | `GET /health` |
 
-**Auth.** The console signs in and gets an httpOnly `homing_session` cookie (`SameSite=Lax`, `Secure` in production). A session holds every scope. Applications send `Authorization: Bearer hk_live_...`. Keys carry scopes: `messages:send`, `messages:read`, `inbox:read`, `webhooks:manage`, `devices:manage`, `admin` (`admin` implies all). Managing API keys and the account needs a session or `admin`. Keys are stored as a peppered SHA-256 hash; only a short prefix is kept for display.
+**Auth.** The console signs in and gets an httpOnly `homing_session` cookie (`SameSite=Lax`, `Secure` in production). Applications send `Authorization: Bearer hk_live_...`. Keys carry scopes: `messages:send`, `messages:read`, `inbox:read`, `webhooks:manage`, `devices:manage`, `admin` (`admin` implies all). Managing API keys and the account needs a session or `admin`. Keys are stored as a peppered SHA-256 hash; only a short prefix is kept for display.
+
+**Accounts, members and roles.** A user can belong to several accounts. A session acts in one account at a time: sign in opens the account the user used last, `POST /auth/switch-account` moves the session, and `GET /auth/me` lists every membership. Each membership has a role. Roles apply to sessions; API keys keep using scopes.
+
+| Action | member | admin | owner |
+| --- | --- | --- | --- |
+| Send and cancel messages, read messages, inbox, devices, webhooks, usage, API key list, member list | yes | yes | yes |
+| Change account settings; create or revoke API keys; create, change, test or delete webhooks; pair, change or remove devices | no | yes | yes |
+| List, create and revoke invites; change roles and remove members other than owners | no | yes | yes |
+| Grant or remove `owner`, change an owner's role, delete the account | no | no | yes |
+
+Anyone can leave an account with `DELETE /team/members/{their id}`. An account always keeps at least one owner (`409` otherwise). Removing someone ends their sessions in that account at once; a user left with no account is deleted.
+
+**Invites.** `POST /team/invites` takes an email and `admin` or `member` and returns `inviteUrl` (`<console>/invite/hi_...`) once; nothing is emailed. The token is stored as a hash, works once and expires after 7 days. Inviting the same email again revokes the earlier link. `GET /invites/{token}` is public so the console can show the account and inviter. The person joins either by signing up with `inviteToken` or, when already signed in, with `POST /invites/{token}/accept`. Both need the invited email; another address gets `403`.
+
+**Account deletion.** `POST /account/deletion` with `{ accountName }` (the exact name), owner only, from a session. API keys are revoked, device tokens stop working, open invites are revoked and every session in the account ends, all in one transaction, and the response clears the cookie. The account's data is then deleted in the background; the maintenance sweep finishes any purge that was interrupted. Users who belong to no other account are removed.
 
 **Messages.** One message has one recipient. `type` selects the body: `sms` (`text`), `data` (base64 `data`, `port`) or `mms` (`subject`, `text`, base64 `attachments`). Options: `idempotencyKey`, `deviceId`, `simSlot` (needs `deviceId`), `scheduleAt`, `validUntil`, `priority` (`normal` or `otp`), `deliveryReport`, `metadata`.
 
@@ -38,6 +54,8 @@ The package exports TypeScript source (`exports["."] = ./src/index.ts`). Next.js
 - `otp` messages are leased before `normal` ones and wake the phone with a high priority push.
 - States: `scheduled` then `pending` then `leased` (pulled by a device) then `queued` (in the phone's send queue) then `sending`, `sent`, `delivered`. `failed`, `cancelled`, `expired` and `delivered` are final. Forward jumps are allowed (a device may report `sent` right after `leased`); going back is not. `sent` may still become `failed` when the carrier reports a delivery failure. Cancel works in `scheduled`, `pending` and `leased`. `GET /messages/{id}` returns the timeline in `events`.
 - An expired lease puts the message back to `pending` (up to 3 attempts, then `failed` with code `lease_expired`). A `pending` message past `validUntil` becomes `expired`.
+
+**Devices.** `status` is `offline` after missed heartbeats, as before. A heartbeating device is `online` when nothing limits it and `degraded` when `statusReasons` lists a problem: `paused`, `low_battery` (below 15% and not charging), `no_network`, `all_sims_disabled`, `sim_no_signal` (with `simSlot`), `device_cap_reached`, `sim_cap_reached` (with `simSlot`) or `stale_heartbeat` (no heartbeat for two intervals). A degraded device is still connected and can still be picked when it has capacity. Offline devices only list setting and cap reasons. Presence webhooks (`device.online`, `device.offline`) and the usage counters still report presence only.
 
 **Lists** use opaque cursors: `?cursor=<nextCursor>&limit=1..100`, newest first, `nextCursor: null` on the last page.
 
@@ -61,9 +79,11 @@ The package exports TypeScript source (`exports["."] = ./src/index.ts`). Next.js
 
 **Presence.** A device is `online` after a heartbeat and `offline` after missing three intervals (180 seconds by default). Both changes emit webhooks.
 
+`GET /messages` filters by `state`, `type`, `deviceId`, `simSlot`, `to` and creation time.
+
 ## Webhooks
 
-Seven subscribable events plus `webhook.test`, a JSON envelope `{ id, type, createdAt, accountId, data }`, and `Homing-Signature: t=<unix>,v1=<HMAC-SHA256 hex of "t.body">` with a 300 second replay window. Up to 8 attempts with exponential backoff from 60 seconds. Details in `WEBHOOKS.md`.
+Nine subscribable events plus `webhook.test`, a JSON envelope `{ id, type, createdAt, accountId, data }`, and `Homing-Signature: t=<unix>,v1=<HMAC-SHA256 hex of "t.body">` with a 300 second replay window. Up to 8 attempts with exponential backoff from 60 seconds. Events are written to an outbox table in the same transaction as the change they describe, so a committed change always produces its event and a rolled back one never does. Targets are resolved once per attempt, checked against private ranges, and the connection goes to that checked address. Details in `WEBHOOKS.md`.
 
 ## Design choices
 

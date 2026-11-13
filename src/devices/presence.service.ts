@@ -5,7 +5,7 @@ import type { DevicePrincipal } from '@/common/auth/principal';
 import { addSeconds } from '@/common/dates';
 import { DatabaseService } from '@/database/database.service';
 import { deviceSims, devices, messages } from '@/database/schema';
-import { WebhookEventsService } from '@/webhooks/webhook-events.service';
+import { WebhookOutbox } from '@/webhooks/webhook-outbox.service';
 import { buildDeviceSettings, type DeviceSettingsResponse } from './device-settings';
 import type { FcmTokenDto, HeartbeatDto } from './dto/heartbeat.dto';
 import { toDeviceEventData } from './entities/device.entity';
@@ -21,12 +21,12 @@ export class PresenceService {
   constructor(
     private readonly database: DatabaseService,
     private readonly config: AppConfig,
-    private readonly webhooks: WebhookEventsService,
+    private readonly outbox: WebhookOutbox,
   ) {}
 
   async heartbeat(principal: DevicePrincipal, dto: HeartbeatDto): Promise<HeartbeatResponse> {
     const now = new Date();
-    const { wasOffline, device } = await this.database.db.transaction(async (tx) => {
+    const device = await this.database.db.transaction(async (tx) => {
       const [before] = await tx
         .select({ status: devices.status })
         .from(devices)
@@ -87,12 +87,14 @@ export class PresenceService {
             reported.length > 0 ? notInArray(deviceSims.slot, reported) : undefined,
           ),
         );
-      return { wasOffline: before.status === 'offline', device: updated! };
+      if (before.status === 'offline') {
+        await this.outbox.add(tx, [
+          { accountId: updated!.accountId, type: 'device.online', data: toDeviceEventData(updated!) },
+        ]);
+      }
+      return updated!;
     });
 
-    if (wasOffline) {
-      await this.webhooks.emit(device.accountId, 'device.online', toDeviceEventData(device));
-    }
     return {
       serverTime: now.toISOString(),
       pendingMessages: await this.pendingFor(principal),
@@ -163,11 +165,12 @@ export class PresenceService {
             ),
           );
       }
+      await this.outbox.add(
+        tx,
+        rows.map((row) => ({ accountId: row.accountId, type: 'device.offline' as const, data: toDeviceEventData(row) })),
+      );
       return rows;
     });
-    for (const device of stale) {
-      await this.webhooks.emit(device.accountId, 'device.offline', toDeviceEventData(device));
-    }
     return stale.length;
   }
 }

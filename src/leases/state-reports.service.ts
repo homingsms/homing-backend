@@ -9,7 +9,7 @@ import { classifyReport } from '@/messages/domain/state-machine';
 import type { MessageRow } from '@/messages/entities/message.entity';
 import { loadMessageResponses, recordMessageEvents } from '@/messages/message-query';
 import type { SubscribableEventType } from '@/webhooks/domain/event-types';
-import { WebhookEventsService } from '@/webhooks/webhook-events.service';
+import { WebhookOutbox } from '@/webhooks/webhook-outbox.service';
 import type { StateReportDto } from './dto/report-states.dto';
 import type { StateReportResult } from './leases.types';
 
@@ -30,13 +30,13 @@ function ownsMessage(row: MessageRow, deviceId: string): boolean {
 export class StateReportsService {
   constructor(
     private readonly database: DatabaseService,
-    private readonly webhooks: WebhookEventsService,
+    private readonly outbox: WebhookOutbox,
   ) {}
 
   async report(principal: DevicePrincipal, reports: StateReportDto[]): Promise<StateReportResult[]> {
-    const emitted: { id: string; type: SubscribableEventType }[] = [];
-    const results = await this.database.db.transaction(async (tx) => {
+    return this.database.db.transaction(async (tx) => {
       const output: StateReportResult[] = [];
+      const emitted: { id: string; type: SubscribableEventType }[] = [];
       for (const report of reports) {
         const result = await this.apply(tx, principal, report);
         output.push(result);
@@ -45,22 +45,18 @@ export class StateReportsService {
           emitted.push({ id: report.messageId, type });
         }
       }
+      const responses = new Map(
+        (await loadMessageResponses(tx, [...new Set(emitted.map((item) => item.id))])).map((message) => [message.id, message]),
+      );
+      await this.outbox.add(
+        tx,
+        emitted.flatMap(({ id, type }) => {
+          const message = responses.get(id);
+          return message ? [{ accountId: principal.accountId, type, data: { message } }] : [];
+        }),
+      );
       return output;
     });
-
-    const responses = new Map(
-      (await loadMessageResponses(this.database.db, [...new Set(emitted.map((item) => item.id))])).map((message) => [
-        message.id,
-        message,
-      ]),
-    );
-    for (const { id, type } of emitted) {
-      const message = responses.get(id);
-      if (message) {
-        await this.webhooks.emit(principal.accountId, type, { message });
-      }
-    }
-    return results;
   }
 
   private async apply(tx: Transaction, principal: DevicePrincipal, report: StateReportDto): Promise<StateReportResult> {

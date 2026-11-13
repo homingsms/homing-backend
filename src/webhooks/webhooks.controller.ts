@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query } from '@nestjs/common';
-import { CurrentPrincipal, RequireScope } from '@/common/auth/auth.decorators';
+import { CurrentPrincipal, RequireRole, RequireScope } from '@/common/auth/auth.decorators';
 import type { Principal } from '@/common/auth/principal';
 import type { Page } from '@/common/pagination/cursor';
 import { CreateWebhookDto } from './dto/create-webhook.dto';
@@ -22,6 +22,7 @@ export class WebhooksController {
     return { data: await this.webhooks.list(principal.accountId) };
   }
 
+  @RequireRole('admin')
   @Post()
   create(@CurrentPrincipal() principal: Principal, @Body() dto: CreateWebhookDto) {
     return this.webhooks.create(principal.accountId, dto);
@@ -32,6 +33,7 @@ export class WebhooksController {
     return this.webhooks.get(principal.accountId, id);
   }
 
+  @RequireRole('admin')
   @Patch(':webhookId')
   update(
     @CurrentPrincipal() principal: Principal,
@@ -41,18 +43,21 @@ export class WebhooksController {
     return this.webhooks.update(principal.accountId, id, dto);
   }
 
+  @RequireRole('admin')
   @Delete(':webhookId')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@CurrentPrincipal() principal: Principal, @Param('webhookId') id: string): Promise<void> {
     return this.webhooks.remove(principal.accountId, id);
   }
 
+  @RequireRole('admin')
   @Post(':webhookId/rotate-secret')
   @HttpCode(HttpStatus.OK)
   rotate(@CurrentPrincipal() principal: Principal, @Param('webhookId') id: string): Promise<{ secret: string }> {
     return this.webhooks.rotateSecret(principal.accountId, id);
   }
 
+  @RequireRole('admin')
   @Post(':webhookId/test')
   @HttpCode(HttpStatus.ACCEPTED)
   test(@CurrentPrincipal() principal: Principal, @Param('webhookId') id: string): Promise<WebhookDeliveryResponse> {
@@ -68,6 +73,7 @@ export class WebhooksController {
     return this.webhooks.listDeliveries(principal.accountId, id, query);
   }
 
+  @RequireRole('admin')
   @Post(':webhookId/deliveries/:deliveryId/redeliver')
   @HttpCode(HttpStatus.ACCEPTED)
   redeliver(

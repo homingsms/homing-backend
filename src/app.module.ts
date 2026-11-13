@@ -6,6 +6,8 @@ import { AccountsModule } from '@/accounts/accounts.module';
 import { ApiKeysModule } from '@/api-keys/api-keys.module';
 import { AuthCoreModule } from '@/common/auth/auth-core.module';
 import { AuthGuard } from '@/common/auth/auth.guard';
+import { RateLimitModule } from '@/common/http/rate-limit.module';
+import { RedisThrottlerStorage } from '@/common/http/redis-throttler.storage';
 import { RequestLoggerMiddleware } from '@/common/http/request-logger.middleware';
 import { HomingThrottlerGuard, isStrictThrottled } from '@/common/http/throttling';
 import { redisOptionsFromUrl } from '@/common/redis';
@@ -20,6 +22,7 @@ import { LeasesModule } from '@/leases/leases.module';
 import { MaintenanceModule } from '@/maintenance/maintenance.module';
 import { MessagesModule } from '@/messages/messages.module';
 import { PushModule } from '@/push/push.module';
+import { TeamModule } from '@/team/team.module';
 import { UsageModule } from '@/usage/usage.module';
 import { WebhooksModule } from '@/webhooks/webhooks.module';
 
@@ -37,8 +40,10 @@ import { WebhooksModule } from '@/webhooks/webhooks.module';
       }),
     }),
     ThrottlerModule.forRootAsync({
-      inject: [AppConfig],
-      useFactory: (config: AppConfig) => ({
+      imports: [RateLimitModule],
+      inject: [AppConfig, RedisThrottlerStorage],
+      useFactory: (config: AppConfig, storage: RedisThrottlerStorage) => ({
+        storage,
         throttlers: [
           {
             name: 'default',
@@ -55,6 +60,7 @@ import { WebhooksModule } from '@/webhooks/webhooks.module';
       }),
     }),
     AccountsModule,
+    TeamModule,
     ApiKeysModule,
     DevicesModule,
     MessagesModule,

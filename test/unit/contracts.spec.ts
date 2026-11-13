@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
+import { INVITE_ROLES, ROLES } from '@/common/auth/roles';
 import { SCOPES } from '@/common/auth/scopes';
+import { DEVICE_STATUS_REASON_CODES, DEVICE_STATUSES } from '@/devices/domain/device-status';
 import { DEVICE_REPORT_STATES, MESSAGE_PRIORITIES, MESSAGE_STATES, MESSAGE_TYPES } from '@/messages/domain/states';
 import { SUBSCRIBABLE_EVENT_TYPES, WEBHOOK_EVENT_TYPES } from '@/webhooks/domain/event-types';
 
@@ -29,6 +31,11 @@ describe('server enums match the OpenAPI contracts', () => {
     ['MessagePriority', MESSAGE_PRIORITIES],
     ['WebhookEventType', WEBHOOK_EVENT_TYPES],
     ['SubscribableEventType', SUBSCRIBABLE_EVENT_TYPES],
+    ['Role', ROLES],
+    ['InviteRole', INVITE_ROLES],
+    ['DeviceStatus', DEVICE_STATUSES],
+    ['DevicePresence', ['online', 'offline']],
+    ['DeviceStatusReasonCode', DEVICE_STATUS_REASON_CODES],
   ])('public %s', (schema, values) => {
     expect(enumOf(publicSpec, schema)).toEqual([...values]);
   });

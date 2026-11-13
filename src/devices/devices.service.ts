@@ -1,12 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { AppConfig } from '@/config/app-config.service';
 import { DatabaseService } from '@/database/database.service';
 import type { Transaction } from '@/database/database.types';
 import { deviceSims, devices, messages } from '@/database/schema';
 import { loadMessageResponses, recordMessageEvents } from '@/messages/message-query';
 import { PushService } from '@/push/push.service';
-import { WebhookEventsService } from '@/webhooks/webhook-events.service';
+import { WebhookOutbox } from '@/webhooks/webhook-outbox.service';
 import { DeviceCapacityService } from './device-capacity.service';
+import type { StatusPolicy } from './domain/device-status';
 import type { UpdateDeviceDto } from './dto/update-device.dto';
 import { type DeviceResponse, toDeviceResponse } from './entities/device.entity';
 
@@ -19,12 +21,21 @@ export class DevicesService {
     private readonly database: DatabaseService,
     private readonly capacity: DeviceCapacityService,
     private readonly push: PushService,
-    private readonly webhooks: WebhookEventsService,
+    private readonly outbox: WebhookOutbox,
+    private readonly config: AppConfig,
   ) {}
+
+  private statusPolicy(): StatusPolicy {
+    return {
+      lowBatteryPercent: this.config.get('LOW_BATTERY_PERCENT'),
+      staleAfterSeconds: this.config.staleHeartbeatSeconds,
+    };
+  }
 
   async list(accountId: string): Promise<DeviceResponse[]> {
     const snapshots = await this.capacity.load({ accountId });
-    return snapshots.map(toDeviceResponse);
+    const now = new Date();
+    return snapshots.map((snapshot) => toDeviceResponse(snapshot, this.statusPolicy(), now));
   }
 
   async get(accountId: string, id: string): Promise<DeviceResponse> {
@@ -32,7 +43,7 @@ export class DevicesService {
     if (!snapshot || snapshot.device.accountId !== accountId) {
       throw new NotFoundException('Device not found');
     }
-    return toDeviceResponse(snapshot);
+    return toDeviceResponse(snapshot, this.statusPolicy());
   }
 
   async update(accountId: string, id: string, dto: UpdateDeviceDto): Promise<DeviceResponse> {
@@ -68,7 +79,7 @@ export class DevicesService {
 
   async remove(accountId: string, id: string): Promise<void> {
     const now = new Date();
-    const { fcmToken, failedIds } = await this.database.db.transaction(async (tx) => {
+    const { fcmToken } = await this.database.db.transaction(async (tx) => {
       const device = await this.lock(tx, accountId, id);
       const failed = await tx
         .update(messages)
@@ -112,13 +123,18 @@ export class DevicesService {
           updatedAt: now,
         })
         .where(eq(devices.id, id));
-      return { fcmToken: device.fcmToken, failedIds: failed.map((row) => row.id) };
+      const failedMessages = await loadMessageResponses(
+        tx,
+        failed.map((row) => row.id),
+      );
+      await this.outbox.add(
+        tx,
+        failedMessages.map((message) => ({ accountId, type: 'message.failed' as const, data: { message } })),
+      );
+      return { fcmToken: device.fcmToken };
     });
 
     await this.push.wake({ id, fcmToken }, 'device_removed');
-    for (const message of await loadMessageResponses(this.database.db, failedIds)) {
-      await this.webhooks.emit(accountId, 'message.failed', { message });
-    }
   }
 
   private async lock(tx: Transaction, accountId: string, id: string) {

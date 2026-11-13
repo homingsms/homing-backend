@@ -7,7 +7,8 @@ import { DatabaseService } from '@/database/database.service';
 import { devices, messageAttachments, messages } from '@/database/schema';
 import { DeviceCapacityService } from '@/devices/device-capacity.service';
 import type { MessageRow } from '@/messages/entities/message.entity';
-import { recordMessageEvents } from '@/messages/message-query';
+import { loadMessageResponses, recordMessageEvents } from '@/messages/message-query';
+import { WebhookOutbox } from '@/webhooks/webhook-outbox.service';
 import { DEFAULT_PULL_LIMIT } from './dto/pull-messages.dto';
 import { selectForLease } from './lease-selection';
 import type { DeviceMessageResponse } from './leases.types';
@@ -25,6 +26,7 @@ export class LeasesService {
     private readonly database: DatabaseService,
     private readonly capacity: DeviceCapacityService,
     private readonly config: AppConfig,
+    private readonly outbox: WebhookOutbox,
   ) {}
 
   async pull(principal: DevicePrincipal, limit: number = DEFAULT_PULL_LIMIT): Promise<DeviceMessageResponse[]> {
@@ -109,10 +111,20 @@ export class LeasesService {
           errorMessage: row.state === 'failed' ? 'No device confirmed the message in time' : null,
         })),
       );
-      return {
-        requeued: rows.filter((row) => row.state === 'pending'),
-        failed: rows.filter((row) => row.state === 'failed'),
-      };
+      const failed = rows.filter((row) => row.state === 'failed');
+      const failedMessages = await loadMessageResponses(
+        tx,
+        failed.map((row) => row.id),
+      );
+      await this.outbox.add(
+        tx,
+        failedMessages.map((message) => ({
+          accountId: failed.find((row) => row.id === message.id)!.accountId,
+          type: 'message.failed' as const,
+          data: { message },
+        })),
+      );
+      return { requeued: rows.filter((row) => row.state === 'pending'), failed };
     });
   }
 

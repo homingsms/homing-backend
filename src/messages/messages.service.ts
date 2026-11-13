@@ -14,7 +14,8 @@ import { isCancellable } from './domain/state-machine';
 import type { ListMessagesQueryDto } from './dto/list-messages.query.dto';
 import type { SendMessageDto } from './dto/send-message.dto';
 import type { MessageDetailResponse, MessageResponse, MessageRow } from './entities/message.entity';
-import { recordMessageEvents, toMessageResponses } from './message-query';
+import { WebhookOutbox } from '@/webhooks/webhook-outbox.service';
+import { loadMessageResponses, recordMessageEvents, toMessageResponses } from './message-query';
 import { MessageReaderService } from './message-reader.service';
 
 export interface CreateResult {
@@ -28,6 +29,7 @@ export class MessagesService {
     private readonly database: DatabaseService,
     private readonly reader: MessageReaderService,
     private readonly dispatcher: DispatcherService,
+    private readonly outbox: WebhookOutbox,
   ) {}
 
   async create(principal: Principal, dto: SendMessageDto): Promise<CreateResult> {
@@ -114,6 +116,7 @@ export class MessagesService {
       query.state ? eq(messages.state, query.state) : undefined,
       query.type ? eq(messages.type, query.type) : undefined,
       query.deviceId ? eq(messages.deviceId, query.deviceId) : undefined,
+      query.simSlot !== undefined ? eq(messages.simSlot, query.simSlot) : undefined,
       query.to ? eq(messages.to, query.to) : undefined,
       query.createdFrom ? gte(messages.createdAt, query.createdFrom) : undefined,
       query.createdTo ? lt(messages.createdAt, query.createdTo) : undefined,
@@ -152,6 +155,8 @@ export class MessagesService {
         .set({ state: 'cancelled', leaseExpiresAt: null, updatedAt: now })
         .where(eq(messages.id, id));
       await recordMessageEvents(tx, [{ messageId: id, state: 'cancelled', at: now, deviceId: row.deviceId }]);
+      const [message] = await loadMessageResponses(tx, [id]);
+      await this.outbox.add(tx, [{ accountId, type: 'message.cancelled', data: { message } }]);
     });
     return this.reader.detail(accountId, id);
   }

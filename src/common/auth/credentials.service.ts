@@ -3,7 +3,7 @@ import { and, eq, gt, isNull } from 'drizzle-orm';
 import { AppConfig } from '@/config/app-config.service';
 import { hashSecret } from '@/common/crypto/secrets';
 import { DatabaseService } from '@/database/database.service';
-import { apiKeys, devices, sessions, users } from '@/database/schema';
+import { accountMembers, accounts, apiKeys, devices, sessions } from '@/database/schema';
 import { LAST_USED_WRITE_INTERVAL_MS } from './constants';
 import type { ApiKeyPrincipal, DevicePrincipal, SessionPrincipal } from './principal';
 import { SCOPES, type Scope } from './scopes';
@@ -23,10 +23,21 @@ export class CredentialsService {
 
   async resolveSession(token: string): Promise<SessionPrincipal | null> {
     const [row] = await this.database.db
-      .select({ sessionId: sessions.id, userId: users.id, accountId: users.accountId })
+      .select({
+        sessionId: sessions.id,
+        userId: sessions.userId,
+        accountId: sessions.accountId,
+        role: accountMembers.role,
+      })
       .from(sessions)
-      .innerJoin(users, eq(users.id, sessions.userId))
-      .where(and(eq(sessions.tokenHash, this.hash(token)), gt(sessions.expiresAt, new Date())))
+      .innerJoin(
+        accountMembers,
+        and(eq(accountMembers.userId, sessions.userId), eq(accountMembers.accountId, sessions.accountId)),
+      )
+      .innerJoin(accounts, eq(accounts.id, sessions.accountId))
+      .where(
+        and(eq(sessions.tokenHash, this.hash(token)), gt(sessions.expiresAt, new Date()), isNull(accounts.deletedAt)),
+      )
       .limit(1);
     return row ? { kind: 'session', ...row } : null;
   }

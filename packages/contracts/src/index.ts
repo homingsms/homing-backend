@@ -26,6 +26,20 @@ type DeviceSchemas = DeviceComponents['schemas'];
 export type ApiError = PublicSchemas['Error'];
 export type Scope = PublicSchemas['Scope'];
 export type User = PublicSchemas['User'];
+export type Role = PublicSchemas['Role'];
+export type Membership = PublicSchemas['Membership'];
+export type SwitchAccountRequest = PublicSchemas['SwitchAccountRequest'];
+export type DeleteAccountRequest = PublicSchemas['DeleteAccountRequest'];
+export type TeamMember = PublicSchemas['TeamMember'];
+export type TeamMemberList = PublicSchemas['TeamMemberList'];
+export type UpdateTeamMemberRequest = PublicSchemas['UpdateTeamMemberRequest'];
+export type InviteRole = PublicSchemas['InviteRole'];
+export type InviteStatus = PublicSchemas['InviteStatus'];
+export type Invite = PublicSchemas['Invite'];
+export type InviteWithLink = PublicSchemas['InviteWithLink'];
+export type InviteList = PublicSchemas['InviteList'];
+export type CreateInviteRequest = PublicSchemas['CreateInviteRequest'];
+export type InvitePreview = PublicSchemas['InvitePreview'];
 export type Account = PublicSchemas['Account'];
 export type Session = PublicSchemas['Session'];
 export type RoutingStrategy = PublicSchemas['RoutingStrategy'];
@@ -39,6 +53,9 @@ export type CreateApiKeyRequest = PublicSchemas['CreateApiKeyRequest'];
 export type Device = PublicSchemas['Device'];
 export type DeviceList = PublicSchemas['DeviceList'];
 export type DeviceStatus = PublicSchemas['DeviceStatus'];
+export type DevicePresence = PublicSchemas['DevicePresence'];
+export type DeviceStatusReason = PublicSchemas['DeviceStatusReason'];
+export type DeviceStatusReasonCode = PublicSchemas['DeviceStatusReasonCode'];
 export type DeviceHealth = PublicSchemas['DeviceHealth'];
 export type Sim = PublicSchemas['Sim'];
 export type UpdateDeviceRequest = PublicSchemas['UpdateDeviceRequest'];
@@ -116,6 +133,23 @@ export const SCOPES = [
   'admin',
 ] as const satisfies readonly Scope[];
 
+export const ROLES = ['owner', 'admin', 'member'] as const satisfies readonly Role[];
+
+export const INVITE_ROLES = ['admin', 'member'] as const satisfies readonly InviteRole[];
+
+export const DEVICE_STATUSES = ['online', 'degraded', 'offline'] as const satisfies readonly DeviceStatus[];
+
+export const DEVICE_STATUS_REASON_CODES = [
+  'paused',
+  'low_battery',
+  'no_network',
+  'all_sims_disabled',
+  'sim_no_signal',
+  'device_cap_reached',
+  'sim_cap_reached',
+  'stale_heartbeat',
+] as const satisfies readonly DeviceStatusReasonCode[];
+
 export const MESSAGE_TYPES = ['sms', 'data', 'mms'] as const satisfies readonly MessageType[];
 
 export const MESSAGE_STATES = [
@@ -156,6 +190,8 @@ export const SUBSCRIBABLE_EVENT_TYPES = [
   'message.sent',
   'message.delivered',
   'message.failed',
+  'message.cancelled',
+  'message.expired',
   'inbox.received',
   'device.online',
   'device.offline',

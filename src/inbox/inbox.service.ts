@@ -8,7 +8,9 @@ import { beforeCursor } from '@/common/pagination/keyset';
 import { DatabaseService } from '@/database/database.service';
 import { inboxAttachments, inboxMessages } from '@/database/schema';
 import type { AttachmentMeta } from '@/messages/entities/message.entity';
-import { WebhookEventsService } from '@/webhooks/webhook-events.service';
+import type { DbExecutor } from '@/database/database.types';
+import type { PendingEvent } from '@/webhooks/webhook-outbox.service';
+import { WebhookOutbox } from '@/webhooks/webhook-outbox.service';
 import { matchOptOut } from './domain/opt-out';
 import type { ListInboxQueryDto } from './dto/list-inbox.query.dto';
 import type { InboxUploadDto } from './dto/push-inbox.dto';
@@ -26,7 +28,7 @@ export class InboxService {
   constructor(
     private readonly database: DatabaseService,
     private readonly config: AppConfig,
-    private readonly webhooks: WebhookEventsService,
+    private readonly outbox: WebhookOutbox,
   ) {}
 
   async ingest(principal: DevicePrincipal, uploads: InboxUploadDto[]): Promise<InboxPushResult[]> {
@@ -34,8 +36,8 @@ export class InboxService {
     if (errors.length > 0) {
       throw new BadRequestException(errors);
     }
-    const created: InboxRow[] = [];
-    const results = await this.database.db.transaction(async (tx) => {
+    return this.database.db.transaction(async (tx) => {
+      const created: InboxRow[] = [];
       const output: InboxPushResult[] = [];
       for (const upload of uploads) {
         const [row] = await tx
@@ -85,10 +87,9 @@ export class InboxService {
         created.push(row);
         output.push({ localId: upload.localId, id: row.id, duplicate: false });
       }
+      await this.outbox.add(tx, await this.announcements(tx, principal.accountId, created));
       return output;
     });
-    await this.announce(created);
-    return results;
   }
 
   async list(accountId: string, query: ListInboxQueryDto): Promise<Page<InboxMessageResponse>> {
@@ -141,10 +142,10 @@ export class InboxService {
     return row;
   }
 
-  private async describe(rows: InboxRow[]): Promise<InboxMessageResponse[]> {
+  private async describe(rows: InboxRow[], executor: DbExecutor = this.database.db): Promise<InboxMessageResponse[]> {
     const ids = rows.filter((row) => row.type === 'mms').map((row) => row.id);
     const metas = ids.length
-      ? await this.database.db
+      ? await executor
           .select({
             id: inboxAttachments.id,
             inboxMessageId: inboxAttachments.inboxMessageId,
@@ -163,23 +164,26 @@ export class InboxService {
     return rows.map((row) => toInboxResponse(row, byMessage.get(row.id) ?? []));
   }
 
-  private async announce(rows: InboxRow[]): Promise<void> {
-    if (rows.length === 0) {
-      return;
-    }
+  private async announcements(executor: DbExecutor, accountId: string, rows: InboxRow[]): Promise<PendingEvent[]> {
     const keywords = this.config.get('OPT_OUT_KEYWORDS');
-    for (const message of await this.describe(rows)) {
-      await this.webhooks.emit(rows[0]!.accountId, 'inbox.received', { message });
+    const events: PendingEvent[] = [];
+    for (const message of await this.describe(rows, executor)) {
+      events.push({ accountId, type: 'inbox.received', data: { message } });
       const keyword = message.type === 'sms' ? matchOptOut(message.text, keywords) : null;
       if (keyword) {
-        await this.webhooks.emit(rows[0]!.accountId, 'opt_out.received', {
-          phoneNumber: message.from,
-          keyword,
-          inboxMessageId: message.id,
-          deviceId: message.deviceId,
-          receivedAt: message.receivedAt,
+        events.push({
+          accountId,
+          type: 'opt_out.received',
+          data: {
+            phoneNumber: message.from,
+            keyword,
+            inboxMessageId: message.id,
+            deviceId: message.deviceId,
+            receivedAt: message.receivedAt,
+          },
         });
       }
     }
+    return events;
   }
 }

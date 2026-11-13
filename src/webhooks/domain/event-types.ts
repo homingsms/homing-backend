@@ -2,6 +2,8 @@ export const SUBSCRIBABLE_EVENT_TYPES = [
   'message.sent',
   'message.delivered',
   'message.failed',
+  'message.cancelled',
+  'message.expired',
   'inbox.received',
   'device.online',
   'device.offline',
