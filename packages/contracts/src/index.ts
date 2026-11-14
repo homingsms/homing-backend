@@ -24,6 +24,9 @@ type PublicSchemas = PublicComponents['schemas'];
 type DeviceSchemas = DeviceComponents['schemas'];
 
 export type ApiError = PublicSchemas['Error'];
+export type ErrorCode = PublicSchemas['ErrorCode'];
+export type TermsVersion = PublicSchemas['TermsVersion'];
+export type AcceptTermsRequest = PublicSchemas['AcceptTermsRequest'];
 export type Scope = PublicSchemas['Scope'];
 export type User = PublicSchemas['User'];
 export type Role = PublicSchemas['Role'];
@@ -208,6 +211,10 @@ export const FCM_WAKE_REASONS = [
   'settings_changed',
   'device_removed',
 ] as const satisfies readonly FcmWakeData['reason'][];
+
+export const ERROR_CODES = ['terms_not_accepted', 'terms_version_mismatch'] as const satisfies readonly ErrorCode[];
+
+export const CURRENT_TERMS_VERSION = '2026-11-14' satisfies TermsVersion;
 
 export const API_BASE_PATH = '/api/v1';
 export const SESSION_COOKIE_NAME = 'homing_session';

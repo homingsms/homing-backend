@@ -11,8 +11,11 @@ import type {
 import { nanoid } from 'nanoid';
 import request, { type Response } from 'supertest';
 import type { App } from 'supertest/types';
+import { CURRENT_TERMS_VERSION } from '@/accounts/terms';
 
 export const API = '/api/v1';
+
+export const TERMS = { acceptTerms: true, termsVersion: CURRENT_TERMS_VERSION } as const;
 
 export function bodyOf<T>(response: Response): T {
   return response.body as T;
@@ -31,7 +34,7 @@ export function sessionCookie(response: Response): string {
 export async function signUp(http: App, email = `owner-${nanoid(6).toLowerCase()}@example.com`) {
   const response = await request(http)
     .post(`${API}/auth/sign-up`)
-    .send({ email, password: 'correct horse battery', name: 'Ada Owner', accountName: 'Ada Shop' })
+    .send({ email, password: 'correct horse battery', name: 'Ada Owner', accountName: 'Ada Shop', ...TERMS })
     .expect(201);
   return { cookie: sessionCookie(response), session: bodyOf<Session>(response), response, email };
 }
@@ -106,7 +109,7 @@ export async function joinTeam(http: App, ownerCookie: string, role: InviteRole)
   const { token, email } = await invite(http, ownerCookie, role);
   const response = await request(http)
     .post(`${API}/auth/sign-up`)
-    .send({ email, password: PASSWORD, name: `Team ${role}`, inviteToken: token })
+    .send({ email, password: PASSWORD, name: `Team ${role}`, inviteToken: token, ...TERMS })
     .expect(201);
   const session = bodyOf<Session>(response);
   return { cookie: sessionCookie(response), session, email, userId: session.user.id };

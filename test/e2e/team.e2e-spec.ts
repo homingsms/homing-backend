@@ -1,6 +1,6 @@
 import type { InviteList, InvitePreview, Session, TeamMember, TeamMemberList } from '@homing/contracts';
 import request from 'supertest';
-import { API, bodyOf, invite, joinTeam, PASSWORD, sessionCookie, signUp } from './api';
+import { API, bodyOf, invite, joinTeam, PASSWORD, sessionCookie, signUp, TERMS } from './api';
 import { createTestApp, type TestContext } from './app';
 import { assertMatchesSchema } from './contract';
 
@@ -41,15 +41,15 @@ describe('team, roles and invites', () => {
     const { token, email } = await invite(ctx.http, ownerCookie, 'member');
     await request(ctx.http)
       .post(`${API}/auth/sign-up`)
-      .send({ email: 'someone-else@example.com', password: PASSWORD, name: 'Wrong', inviteToken: token })
+      .send({ email: 'someone-else@example.com', password: PASSWORD, name: 'Wrong', inviteToken: token , ...TERMS })
       .expect(403);
     await request(ctx.http)
       .post(`${API}/auth/sign-up`)
-      .send({ email, password: PASSWORD, name: 'Bad token', inviteToken: 'hi_not-a-real-token' })
+      .send({ email, password: PASSWORD, name: 'Bad token', inviteToken: 'hi_not-a-real-token' , ...TERMS })
       .expect(400);
     const joined = await request(ctx.http)
       .post(`${API}/auth/sign-up`)
-      .send({ email: email.toUpperCase(), password: PASSWORD, name: 'Mia Member', accountName: 'Ignored', inviteToken: token })
+      .send({ email: email.toUpperCase(), password: PASSWORD, name: 'Mia Member', accountName: 'Ignored', inviteToken: token , ...TERMS })
       .expect(201);
     const session = bodyOf<Session>(joined);
     assertMatchesSchema('public', 'Session', session);
@@ -59,7 +59,7 @@ describe('team, roles and invites', () => {
     await request(ctx.http).get(`${API}/invites/${token}`).expect(404);
     await request(ctx.http)
       .post(`${API}/auth/sign-up`)
-      .send({ email: `again-${email}`, password: PASSWORD, name: 'Reuse', inviteToken: token })
+      .send({ email: `again-${email}`, password: PASSWORD, name: 'Reuse', inviteToken: token , ...TERMS })
       .expect(400);
   });
 

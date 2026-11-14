@@ -1,5 +1,5 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Res } from '@nestjs/common';
-import type { Response } from 'express';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { CurrentSession, Public, SessionOnly } from '@/common/auth/auth.decorators';
 import type { SessionPrincipal } from '@/common/auth/principal';
 import { StrictThrottle } from '@/common/http/throttling';
@@ -10,6 +10,7 @@ import { SwitchAccountDto } from './dto/switch-account.dto';
 import type { SessionResponse } from './entities/account.entity';
 import { SessionCookie } from './session-cookie';
 import { SessionsService } from './sessions.service';
+import { acceptanceContext } from './terms';
 
 @Controller('auth')
 export class AuthController {
@@ -22,8 +23,12 @@ export class AuthController {
   @Public()
   @StrictThrottle()
   @Post('sign-up')
-  async signUp(@Body() dto: SignUpDto, @Res({ passthrough: true }) response: Response): Promise<SessionResponse> {
-    const result = await this.accounts.signUp(dto);
+  async signUp(
+    @Body() dto: SignUpDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<SessionResponse> {
+    const result = await this.accounts.signUp(dto, acceptanceContext(request));
     this.cookie.set(response, result.issued);
     return result.session;
   }

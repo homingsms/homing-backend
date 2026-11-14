@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
+import { CURRENT_TERMS_VERSION } from '@/accounts/terms';
+import { ERROR_CODES } from '@/common/http/error-codes';
 import { INVITE_ROLES, ROLES } from '@/common/auth/roles';
 import { SCOPES } from '@/common/auth/scopes';
 import { DEVICE_STATUS_REASON_CODES, DEVICE_STATUSES } from '@/devices/domain/device-status';
@@ -36,8 +38,18 @@ describe('server enums match the OpenAPI contracts', () => {
     ['DeviceStatus', DEVICE_STATUSES],
     ['DevicePresence', ['online', 'offline']],
     ['DeviceStatusReasonCode', DEVICE_STATUS_REASON_CODES],
+    ['ErrorCode', ERROR_CODES],
+    ['TermsVersion', [CURRENT_TERMS_VERSION]],
   ])('public %s', (schema, values) => {
     expect(enumOf(publicSpec, schema)).toEqual([...values]);
+  });
+
+  it('terms version and error codes in the contracts package match the server', () => {
+    const source = readFileSync(join(__dirname, '../../packages/contracts/src/index.ts'), 'utf8');
+    expect(source).toContain(`export const CURRENT_TERMS_VERSION = '${CURRENT_TERMS_VERSION}' satisfies TermsVersion;`);
+    expect(source).toContain(
+      `export const ERROR_CODES = [${ERROR_CODES.map((code) => `'${code}'`).join(', ')}] as const satisfies readonly ErrorCode[];`,
+    );
   });
 
   it('device report states', () => {

@@ -1,6 +1,6 @@
 import type { WebhookEndpointWithSecret } from '@homing/contracts';
 import request from 'supertest';
-import { API, bodyOf, createApiKey, pairDevice, sendSms, signUp } from './api';
+import { API, bodyOf, createApiKey, pairDevice, sendSms, signUp, TERMS } from './api';
 import { createTestApp, type TestContext } from './app';
 import { assertMatchesSchema, loadSpec } from './contract';
 
@@ -72,7 +72,7 @@ describe('access control and errors', () => {
   it('signs in, signs out and rejects bad passwords', async () => {
     const email = `login-${Date.now()}@example.com`;
     await signUp(ctx.http, email);
-    await request(ctx.http).post(`${API}/auth/sign-up`).send({ email, password: 'correct horse battery', name: 'Again' }).expect(409);
+    await request(ctx.http).post(`${API}/auth/sign-up`).send({ email, password: 'correct horse battery', name: 'Again', ...TERMS }).expect(409);
     await request(ctx.http).post(`${API}/auth/sign-in`).send({ email, password: 'wrong password!' }).expect(401);
     const signedIn = await request(ctx.http).post(`${API}/auth/sign-in`).send({ email: email.toUpperCase(), password: 'correct horse battery' }).expect(200);
     const setCookie = String(signedIn.headers['set-cookie']);

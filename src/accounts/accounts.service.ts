@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, ne, or } from 'drizzle-orm';
 import { AppConfig } from '@/config/app-config.service';
 import { CredentialsService } from '@/common/auth/credentials.service';
 import type { SessionPrincipal } from '@/common/auth/principal';
@@ -24,6 +24,15 @@ import type { UpdateAccountDto } from './dto/update-account.dto';
 import { type AccountResponse, type SessionResponse, toAccountResponse, toUserResponse } from './entities/account.entity';
 import { findMembership, listMemberships, pickAccount } from './memberships';
 import { type IssuedSession, SessionsService } from './sessions.service';
+import {
+  type AcceptanceContext,
+  assertCurrentTermsVersion,
+  assertTermsAccepted,
+  CURRENT_TERMS_VERSION,
+  type TermsAcceptance,
+  termsAcceptance,
+  termsAcceptanceRequired,
+} from './terms';
 
 export interface AuthResult {
   session: SessionResponse;
@@ -49,13 +58,15 @@ export class AccountsService {
     private readonly config: AppConfig,
   ) {}
 
-  async signUp(dto: SignUpDto): Promise<AuthResult> {
+  async signUp(dto: SignUpDto, context: AcceptanceContext): Promise<AuthResult> {
+    assertTermsAccepted(dto.acceptTerms, dto.termsVersion);
+    const terms = termsAcceptance(context);
     const passwordHash = await bcrypt.hash(dto.password, this.config.get('BCRYPT_ROUNDS'));
     try {
       return await this.database.db.transaction(async (tx) => {
         const { userId, accountId } = dto.inviteToken
-          ? await this.joinByInvite(tx, dto, dto.inviteToken, passwordHash)
-          : await this.createOwner(tx, dto, passwordHash);
+          ? await this.joinByInvite(tx, dto, dto.inviteToken, passwordHash, terms)
+          : await this.createOwner(tx, dto, passwordHash, terms);
         const issued = await this.sessions.issue(userId, accountId, tx);
         return { session: await this.describeSession(userId, accountId, tx), issued };
       });
@@ -67,17 +78,23 @@ export class AccountsService {
     }
   }
 
-  private async createOwner(tx: Transaction, dto: SignUpDto, passwordHash: string): Promise<NewMember> {
+  private async createOwner(tx: Transaction, dto: SignUpDto, passwordHash: string, terms: TermsAcceptance): Promise<NewMember> {
     const [account] = await tx
       .insert(accounts)
       .values({ id: newId('acc'), name: dto.accountName ?? dto.name })
       .returning({ id: accounts.id });
-    const userId = await this.insertUser(tx, dto, passwordHash);
+    const userId = await this.insertUser(tx, dto, passwordHash, terms);
     await tx.insert(accountMembers).values({ accountId: account!.id, userId, role: 'owner' });
     return { userId, accountId: account!.id };
   }
 
-  private async joinByInvite(tx: Transaction, dto: SignUpDto, token: string, passwordHash: string): Promise<NewMember> {
+  private async joinByInvite(
+    tx: Transaction,
+    dto: SignUpDto,
+    token: string,
+    passwordHash: string,
+    terms: TermsAcceptance,
+  ): Promise<NewMember> {
     const now = new Date();
     const invite = await findOpenInvite(tx, this.credentials.hash(token), now, true);
     if (!invite) {
@@ -86,15 +103,24 @@ export class AccountsService {
     if (invite.email !== dto.email) {
       throw new ForbiddenException(INVITE_EMAIL_MISMATCH);
     }
-    const userId = await this.insertUser(tx, dto, passwordHash);
+    const userId = await this.insertUser(tx, dto, passwordHash, terms);
     await acceptInvite(tx, invite, userId, now);
     return { userId, accountId: invite.accountId };
   }
 
-  private async insertUser(tx: Transaction, dto: SignUpDto, passwordHash: string): Promise<string> {
+  private async insertUser(tx: Transaction, dto: SignUpDto, passwordHash: string, terms: TermsAcceptance): Promise<string> {
     const [user] = await tx
       .insert(users)
-      .values({ id: newId('usr'), email: dto.email, name: dto.name, passwordHash })
+      .values({
+        id: newId('usr'),
+        email: dto.email,
+        name: dto.name,
+        passwordHash,
+        termsVersion: terms.version,
+        termsAcceptedAt: terms.acceptedAt,
+        termsAcceptedIp: terms.ip,
+        termsAcceptedUserAgent: terms.userAgent,
+      })
       .returning({ id: users.id });
     return user!.id;
   }
@@ -133,7 +159,25 @@ export class AccountsService {
       user: toUserResponse(row.user, row.role),
       account: toAccountResponse(row.account),
       memberships: await listMemberships(executor, userId),
+      currentTermsVersion: CURRENT_TERMS_VERSION,
+      termsAcceptanceRequired: termsAcceptanceRequired(row.user.termsVersion),
     };
+  }
+
+  async acceptTerms(session: SessionPrincipal, version: string, context: AcceptanceContext): Promise<SessionResponse> {
+    assertCurrentTermsVersion(version);
+    const terms = termsAcceptance(context);
+    await this.database.db
+      .update(users)
+      .set({
+        termsVersion: terms.version,
+        termsAcceptedAt: terms.acceptedAt,
+        termsAcceptedIp: terms.ip,
+        termsAcceptedUserAgent: terms.userAgent,
+        updatedAt: terms.acceptedAt,
+      })
+      .where(and(eq(users.id, session.userId), or(isNull(users.termsVersion), ne(users.termsVersion, terms.version))));
+    return this.describeSession(session.userId, session.accountId);
   }
 
   async switchAccount(session: SessionPrincipal, accountId: string): Promise<SessionResponse> {

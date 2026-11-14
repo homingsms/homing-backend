@@ -18,6 +18,11 @@ export interface paths {
          * @description Without `inviteToken`, creates an account with the caller as `owner` and starts a session.
          *     With `inviteToken`, creates the user, adds them to the inviting account with the invited
          *     role and starts a session there; `accountName` is ignored and `email` must match the invite.
+         *
+         *     Either way the person must accept the Terms of Service and Acceptable Use Policy: `acceptTerms`
+         *     must be `true` and `termsVersion` must equal the current version (see `TermsVersion`), or the
+         *     request fails with `400` and `code` `terms_not_accepted` or `terms_version_mismatch`. The
+         *     server records the version, time, IP address and user agent of the acceptance.
          */
         post: operations["signUp"];
         delete?: never;
@@ -116,6 +121,30 @@ export interface paths {
          * @description Needs the `owner` or `admin` role.
          */
         patch: operations["updateAccount"];
+        trace?: never;
+    };
+    "/account/terms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept the current terms as the signed-in user
+         * @description Records that the signed-in user accepts the current Terms of Service and Acceptable Use
+         *     Policy, with the time, IP address and user agent. `version` must equal the current version
+         *     (`currentTermsVersion` in the session), otherwise the request fails with `400` and `code`
+         *     `terms_version_mismatch`. Accepting a version the user already accepted changes nothing.
+         *     Any role can call it, from a console session.
+         */
+        post: operations["acceptTerms"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/account/deletion": {
@@ -903,7 +932,20 @@ export interface components {
             timestamp: string;
             /** @example /api/v1/messages */
             path: string;
+            /** @description Stable machine readable reason, present only for errors the client is expected to handle. */
+            code?: components["schemas"]["ErrorCode"];
         };
+        /**
+         * @description `terms_not_accepted`: sign up without `acceptTerms: true`.
+         *     `terms_version_mismatch`: the terms version sent is not the current one.
+         * @enum {string}
+         */
+        ErrorCode: "terms_not_accepted" | "terms_version_mismatch";
+        /**
+         * @description Current version of the Terms of Service, Acceptable Use Policy and Privacy Policy. A new version asks every user to accept again.
+         * @enum {string}
+         */
+        TermsVersion: "2026-11-14";
         /** @enum {string} */
         Scope: "messages:send" | "messages:read" | "inbox:read" | "webhooks:manage" | "devices:manage" | "admin";
         /**
@@ -928,6 +970,16 @@ export interface components {
             name: string;
             /** @description Role in the session's current account. */
             role: components["schemas"]["Role"];
+            /**
+             * @description Terms version the user last accepted, `null` if they never accepted any.
+             * @example 2026-11-14
+             */
+            termsVersion: string | null;
+            /**
+             * Format: date-time
+             * @description When the user accepted `termsVersion`, `null` if they never accepted any.
+             */
+            termsAcceptedAt: string | null;
             createdAt: components["schemas"]["Timestamp"];
         };
         Membership: {
@@ -951,6 +1003,16 @@ export interface components {
             account: components["schemas"]["Account"];
             /** @description Every account the user belongs to, oldest membership first. */
             memberships: components["schemas"]["Membership"][];
+            currentTermsVersion: components["schemas"]["TermsVersion"];
+            /** @description True when `user.termsVersion` is not `currentTermsVersion`. The console asks the user to accept with `POST /account/terms` before going on. */
+            termsAcceptanceRequired: boolean;
+        };
+        AcceptTermsRequest: {
+            /**
+             * @description Must equal `currentTermsVersion`.
+             * @example 2026-11-14
+             */
+            version: string;
         };
         SwitchAccountRequest: {
             accountId: string;
@@ -1025,6 +1087,16 @@ export interface components {
             accountName?: string;
             /** @description Token from an invite link. Joins the inviting account instead of creating one. */
             inviteToken?: string;
+            /**
+             * @description The person agrees to the Terms of Service and Acceptable Use Policy and has read the Privacy Policy.
+             * @constant
+             */
+            acceptTerms: true;
+            /**
+             * @description The terms version the person accepted. Must equal the current `TermsVersion`.
+             * @example 2026-11-14
+             */
+            termsVersion: string;
         };
         SignInRequest: {
             /** Format: email */
@@ -1639,7 +1711,18 @@ export interface operations {
                     "application/json": components["schemas"]["Session"];
                 };
             };
-            400: components["responses"]["BadRequest"];
+            /**
+             * @description The request failed validation, the invite is invalid, or the terms were not accepted
+             *     (`code` `terms_not_accepted`) or were accepted at an old version (`code` `terms_version_mismatch`).
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description The invite was sent to a different email address. */
             403: {
                 headers: {
@@ -1791,6 +1874,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Account"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    acceptTerms: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptTermsRequest"];
+            };
+        };
+        responses: {
+            /** @description Terms accepted. Returns the updated session. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
                 };
             };
             400: components["responses"]["BadRequest"];

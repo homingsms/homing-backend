@@ -17,7 +17,7 @@ NestJS 11 on Express, PostgreSQL 16 with Drizzle ORM and postgres-js, Redis with
 
 | Path | What it holds |
 | --- | --- |
-| `src/accounts` | Sign up, sign in, sessions, account switching, account settings and deletion |
+| `src/accounts` | Sign up, sign in, sessions, account switching, terms acceptance, account settings and deletion |
 | `src/team` | Members, roles (`owner`, `admin`, `member`) and invite links |
 | `src/api-keys` | Scoped `hk_live_` keys, stored as peppered SHA-256 hashes |
 | `src/devices` | Pairing codes, device tokens, heartbeats, presence, status and its reasons, remote settings, daily usage |

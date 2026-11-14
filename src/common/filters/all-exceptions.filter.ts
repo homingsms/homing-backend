@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { STATUS_CODES } from 'node:http';
 import type { Request, Response } from 'express';
+import { ERROR_CODES, type ErrorCode } from '@/common/http/error-codes';
 
 export interface ErrorBody {
   statusCode: number;
@@ -15,6 +16,7 @@ export interface ErrorBody {
   error: string;
   timestamp: string;
   path: string;
+  code?: ErrorCode;
 }
 
 function readMessage(response: unknown, fallback: string): string | string[] {
@@ -31,6 +33,14 @@ function readMessage(response: unknown, fallback: string): string | string[] {
     }
   }
   return fallback;
+}
+
+function readCode(response: unknown): ErrorCode | undefined {
+  if (typeof response !== 'object' || response === null || !('code' in response)) {
+    return undefined;
+  }
+  const code: unknown = response.code;
+  return ERROR_CODES.find((known) => known === code);
 }
 
 function readHttpStatus(exception: unknown): number | null {
@@ -53,11 +63,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     let statusCode: number = HttpStatus.INTERNAL_SERVER_ERROR;
     let message: string | string[] = 'Internal server error';
+    let code: ErrorCode | undefined;
     const clientStatus = readHttpStatus(exception);
 
     if (exception instanceof HttpException) {
       statusCode = exception.getStatus();
       message = readMessage(exception.getResponse(), exception.message);
+      code = readCode(exception.getResponse());
     } else if (clientStatus !== null) {
       statusCode = clientStatus;
       message = STATUS_CODES[clientStatus] ?? 'Bad request';
@@ -74,6 +86,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       error: STATUS_CODES[statusCode] ?? 'Error',
       timestamp: new Date().toISOString(),
       path,
+      ...(code ? { code } : {}),
     };
     if (!response.headersSent) {
       response.status(statusCode).json(body);

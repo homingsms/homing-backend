@@ -20,6 +20,10 @@ export const users = pgTable('users', {
   name: text('name').notNull(),
   passwordHash: text('password_hash').notNull(),
   lastAccountId: text('last_account_id').references((): AnyPgColumn => accounts.id, { onDelete: 'set null' }),
+  termsVersion: text('terms_version'),
+  termsAcceptedAt: tstz('terms_accepted_at'),
+  termsAcceptedIp: text('terms_accepted_ip'),
+  termsAcceptedUserAgent: text('terms_accepted_user_agent'),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });

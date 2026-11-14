@@ -19,7 +19,7 @@ The package exports TypeScript source (`exports["."] = ./src/index.ts`). Next.js
 | Area | Operations |
 | --- | --- |
 | Auth | `POST /auth/sign-up` (optionally with `inviteToken`), `POST /auth/sign-in`, `POST /auth/sign-out`, `POST /auth/switch-account`, `GET /auth/me` |
-| Account | `GET /account`, `PATCH /account` (name, routing strategy), `POST /account/deletion` |
+| Account | `GET /account`, `PATCH /account` (name, routing strategy), `POST /account/terms`, `POST /account/deletion` |
 | Team | `GET /team/members`, `PATCH/DELETE /team/members/{userId}`, `GET/POST /team/invites`, `DELETE /team/invites/{inviteId}`, `GET /invites/{token}`, `POST /invites/{token}/accept` |
 | API keys | `GET /api-keys`, `POST /api-keys` (secret returned once), `DELETE /api-keys/{id}` (revoke) |
 | Devices | `GET /devices`, `GET/PATCH/DELETE /devices/{id}`, `POST /devices/pairing-codes` |
@@ -44,6 +44,8 @@ Anyone can leave an account with `DELETE /team/members/{their id}`. An account a
 
 **Invites.** `POST /team/invites` takes an email and `admin` or `member` and returns `inviteUrl` (`<console>/invite/hi_...`) once; nothing is emailed. The token is stored as a hash, works once and expires after 7 days. Inviting the same email again revokes the earlier link. `GET /invites/{token}` is public so the console can show the account and inviter. The person joins either by signing up with `inviteToken` or, when already signed in, with `POST /invites/{token}/accept`. Both need the invited email; another address gets `403`.
 
+**Terms.** The current terms version is a date string, `2026-11-14`, kept in `TermsVersion` in `public.yaml`, `CURRENT_TERMS_VERSION` in `src/index.ts` and the server (a unit test keeps them equal). Sign up, with or without `inviteToken`, needs `acceptTerms: true` and `termsVersion` equal to the current version, otherwise `400` with `code` `terms_not_accepted` or `terms_version_mismatch`. The server stores the accepted version, time, IP address and user agent on the user. Every `Session` carries `user.termsVersion`, `user.termsAcceptedAt`, `currentTermsVersion` and `termsAcceptanceRequired`; when that flag is true the console blocks until the user calls `POST /account/terms` with `{ version }` (any role, console session only). Bumping the version makes the flag true for everyone who accepted an older one.
+
 **Account deletion.** `POST /account/deletion` with `{ accountName }` (the exact name), owner only, from a session. API keys are revoked, device tokens stop working, open invites are revoked and every session in the account ends, all in one transaction, and the response clears the cookie. The account's data is then deleted in the background; the maintenance sweep finishes any purge that was interrupted. Users who belong to no other account are removed.
 
 **Messages.** One message has one recipient. `type` selects the body: `sms` (`text`), `data` (base64 `data`, `port`) or `mms` (`subject`, `text`, base64 `attachments`). Options: `idempotencyKey`, `deviceId`, `simSlot` (needs `deviceId`), `scheduleAt`, `validUntil`, `priority` (`normal` or `otp`), `deliveryReport`, `metadata`.
@@ -59,7 +61,7 @@ Anyone can leave an account with `DELETE /team/members/{their id}`. An account a
 
 **Lists** use opaque cursors: `?cursor=<nextCursor>&limit=1..100`, newest first, `nextCursor: null` on the last page.
 
-**Errors** always use `{ statusCode, message, error, timestamp, path }`. Validation errors put a list of strings in `message`. `429` carries `Retry-After`.
+**Errors** always use `{ statusCode, message, error, timestamp, path }`, plus a stable `code` (`ErrorCode`) on errors clients are expected to handle, such as `terms_not_accepted`. Validation errors put a list of strings in `message`. `429` carries `Retry-After`.
 
 ## Device protocol, `/api/v1/device`
 

@@ -16,6 +16,8 @@ export interface UserResponse {
   email: string;
   name: string;
   role: Role;
+  termsVersion: string | null;
+  termsAcceptedAt: string | null;
   createdAt: string;
 }
 
@@ -29,6 +31,8 @@ export interface SessionResponse {
   user: UserResponse;
   account: AccountResponse;
   memberships: MembershipResponse[];
+  currentTermsVersion: string;
+  termsAcceptanceRequired: boolean;
 }
 
 export function toAccountResponse(row: AccountRow): AccountResponse {
@@ -46,6 +50,8 @@ export function toUserResponse(row: UserRow, role: Role): UserResponse {
     email: row.email,
     name: row.name,
     role,
+    termsVersion: row.termsVersion,
+    termsAcceptedAt: row.termsAcceptedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
   };
 }

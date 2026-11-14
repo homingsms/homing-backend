@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsEmail, IsOptional, IsString, Length, MaxLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsOptional, IsString, Length, MaxLength } from 'class-validator';
 
 const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
 
@@ -28,4 +28,13 @@ export class SignUpDto {
   @IsString()
   @Length(10, 200)
   inviteToken?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  acceptTerms?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @Length(1, 32)
+  termsVersion?: string;
 }

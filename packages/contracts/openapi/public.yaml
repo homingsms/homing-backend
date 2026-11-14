@@ -58,6 +58,11 @@ paths:
         Without `inviteToken`, creates an account with the caller as `owner` and starts a session.
         With `inviteToken`, creates the user, adds them to the inviting account with the invited
         role and starts a session there; `accountName` is ignored and `email` must match the invite.
+
+        Either way the person must accept the Terms of Service and Acceptable Use Policy: `acceptTerms`
+        must be `true` and `termsVersion` must equal the current version (see `TermsVersion`), or the
+        request fails with `400` and `code` `terms_not_accepted` or `terms_version_mismatch`. The
+        server records the version, time, IP address and user agent of the acceptance.
       security: []
       requestBody:
         required: true
@@ -76,7 +81,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/Session'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: |
+            The request failed validation, the invite is invalid, or the terms were not accepted
+            (`code` `terms_not_accepted`) or were accepted at an old version (`code` `terms_version_mismatch`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '403':
           description: The invite was sent to a different email address.
           content:
@@ -206,6 +217,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /account/terms:
+    post:
+      tags: [Account]
+      operationId: acceptTerms
+      summary: Accept the current terms as the signed-in user
+      description: |
+        Records that the signed-in user accepts the current Terms of Service and Acceptable Use
+        Policy, with the time, IP address and user agent. `version` must equal the current version
+        (`currentTermsVersion` in the session), otherwise the request fails with `400` and `code`
+        `terms_version_mismatch`. Accepting a version the user already accepted changes nothing.
+        Any role can call it, from a console session.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptTermsRequest'
+      responses:
+        '200':
+          description: Terms accepted. Returns the updated session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1579,6 +1622,20 @@ components:
         path:
           type: string
           examples: [/api/v1/messages]
+        code:
+          description: Stable machine readable reason, present only for errors the client is expected to handle.
+          allOf:
+            - $ref: '#/components/schemas/ErrorCode'
+    ErrorCode:
+      type: string
+      description: |
+        `terms_not_accepted`: sign up without `acceptTerms: true`.
+        `terms_version_mismatch`: the terms version sent is not the current one.
+      enum: [terms_not_accepted, terms_version_mismatch]
+    TermsVersion:
+      type: string
+      description: Current version of the Terms of Service, Acceptable Use Policy and Privacy Policy. A new version asks every user to accept again.
+      enum: ['2026-11-14']
     Scope:
       type: string
       enum: [messages:send, messages:read, inbox:read, webhooks:manage, devices:manage, admin]
@@ -1599,7 +1656,7 @@ components:
       enum: [owner, admin, member]
     User:
       type: object
-      required: [id, email, name, role, createdAt]
+      required: [id, email, name, role, termsVersion, termsAcceptedAt, createdAt]
       properties:
         id:
           type: string
@@ -1613,6 +1670,14 @@ components:
           description: Role in the session's current account.
           allOf:
             - $ref: '#/components/schemas/Role'
+        termsVersion:
+          type: [string, 'null']
+          description: Terms version the user last accepted, `null` if they never accepted any.
+          examples: ['2026-11-14']
+        termsAcceptedAt:
+          type: [string, 'null']
+          format: date-time
+          description: When the user accepted `termsVersion`, `null` if they never accepted any.
         createdAt:
           $ref: '#/components/schemas/Timestamp'
     Membership:
@@ -1643,7 +1708,7 @@ components:
           $ref: '#/components/schemas/Timestamp'
     Session:
       type: object
-      required: [user, account, memberships]
+      required: [user, account, memberships, currentTermsVersion, termsAcceptanceRequired]
       properties:
         user:
           $ref: '#/components/schemas/User'
@@ -1654,6 +1719,22 @@ components:
           description: Every account the user belongs to, oldest membership first.
           items:
             $ref: '#/components/schemas/Membership'
+        currentTermsVersion:
+          $ref: '#/components/schemas/TermsVersion'
+        termsAcceptanceRequired:
+          type: boolean
+          description: True when `user.termsVersion` is not `currentTermsVersion`. The console asks the user to accept with `POST /account/terms` before going on.
+    AcceptTermsRequest:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version:
+          type: string
+          minLength: 1
+          maxLength: 32
+          description: Must equal `currentTermsVersion`.
+          examples: ['2026-11-14']
     SwitchAccountRequest:
       type: object
       additionalProperties: false
@@ -1779,7 +1860,7 @@ components:
     SignUpRequest:
       type: object
       additionalProperties: false
-      required: [email, password, name]
+      required: [email, password, name, acceptTerms, termsVersion]
       properties:
         email:
           type: string
@@ -1803,6 +1884,16 @@ components:
           minLength: 10
           maxLength: 200
           description: Token from an invite link. Joins the inviting account instead of creating one.
+        acceptTerms:
+          type: boolean
+          const: true
+          description: The person agrees to the Terms of Service and Acceptable Use Policy and has read the Privacy Policy.
+        termsVersion:
+          type: string
+          minLength: 1
+          maxLength: 32
+          description: The terms version the person accepted. Must equal the current `TermsVersion`.
+          examples: ['2026-11-14']
     SignInRequest:
       type: object
       additionalProperties: false
